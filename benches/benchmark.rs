@@ -4,10 +4,17 @@ use robodoan::*;
 
 const NDIM: usize = 4;
 
-fn exec_moves(init_state: BlockSet, twists: &[Twist]) -> BlockSet {
+fn exec_moves_on_blocks(init_state: BlockSet, twists: &[Twist]) -> BlockSet {
     twists.iter().fold(init_state, |state, &twist| {
         state.do_twist(twist, NDIM).unwrap()
     })
+}
+
+fn exec_moves_on_state(mut state: PuzzleState, twists: &[Twist]) -> PuzzleState {
+    for &twist in twists {
+        state.do_twist(twist);
+    }
+    state
 }
 
 fn do_and_undo(twists: Vec<Twist>) -> Vec<Twist> {
@@ -30,7 +37,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             let gen_random_moves = gen_random_moves.clone();
             b.iter_batched(
                 gen_random_moves.clone(),
-                |input| exec_moves(init_state, &input),
+                |input| exec_moves_on_blocks(init_state, &input),
                 criterion::BatchSize::SmallInput,
             );
         });
@@ -39,7 +46,27 @@ fn criterion_benchmark(c: &mut Criterion) {
             let mut gen_random_moves = gen_random_moves.clone();
             b.iter_batched(
                 || do_and_undo(gen_random_moves()),
-                |input| exec_moves(init_state, &input),
+                |input| exec_moves_on_blocks(init_state, &input),
+                criterion::BatchSize::SmallInput,
+            );
+        });
+    }
+
+    for (init_state, name) in [(PuzzleState::default(), "full puzzle")] {
+        c.bench_function(&format!("do moves on {name}"), |b| {
+            let gen_random_moves = gen_random_moves.clone();
+            b.iter_batched(
+                gen_random_moves.clone(),
+                |input| exec_moves_on_state(init_state.clone(), &input),
+                criterion::BatchSize::SmallInput,
+            );
+        });
+
+        c.bench_function(&format!("do & undo moves on {name}"), |b| {
+            let mut gen_random_moves = gen_random_moves.clone();
+            b.iter_batched(
+                || do_and_undo(gen_random_moves()),
+                |input| exec_moves_on_state(init_state.clone(), &input),
                 criterion::BatchSize::SmallInput,
             );
         });

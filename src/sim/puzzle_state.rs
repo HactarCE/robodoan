@@ -1,7 +1,9 @@
+use std::u8;
+
 use cgmath::{InnerSpace, vec4};
 use itertools::Itertools;
 
-use crate::{ELEM_COUNT, ElemId, GripId, HYPERCUBE_ROTATIONS, IDENT, Twist, Vec4};
+use crate::{ELEM_COUNT, ElemId, GripId, GripSet, HYPERCUBE_ROTATIONS, IDENT, Twist, Vec4};
 
 const INDICES_FOR_GRIP: [[u8; 26]; 8] = [
     indices_for_grip(GripId::new(0)),
@@ -16,6 +18,9 @@ const INDICES_FOR_GRIP: [[u8; 26]; 8] = [
 
 #[static_init::dynamic]
 static MUL_ELEM_INDEX: [[u8; 72]; ELEM_COUNT] = gen_mul_elem_index_table();
+
+/// Mapping from 0..81 to 0..72
+const ADJUST_INDEX: [u8; 81] = gen_adjust_index_table();
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PuzzleState {
@@ -70,6 +75,17 @@ impl PuzzleState {
             .count();
 
         [ridges, edges, corners]
+    }
+
+    pub fn triplet_score_on_axis(&self, axis: u8) -> usize {
+        todo!()
+        // let [g, _] = GripId::pair_on_axis(axis as usize);
+        // for i in const { non_corner_non_core_pieces() } {
+        //     let new_axis = (self.piece_attitudes[i as usize].inv() * g).axis();
+        // }
+        // for (i, piece) in self.piece_attitudes.iter().enumerate() {
+        //     piece
+        // }
     }
 }
 
@@ -135,6 +151,70 @@ const fn adjust_index(mut i: usize) -> Option<u8> {
         }
         j -= 1;
     }
+}
+
+const fn gen_adjust_index_table() -> [u8; 81] {
+    let mut ret = [u8::MAX; 81];
+    let mut i = 0;
+    while i < 81 {
+        if let Some(j) = adjust_index(i) {
+            ret[i] = j;
+        }
+        i += 1;
+    }
+    ret
+}
+
+/// Returns a list of edges using 0..81 indexes
+const fn edges() -> [u8; 32] {
+    pieces_with_sticker_count(3)
+}
+/// Returns a list of ridges using 0..81 indexes
+const fn ridges() -> [u8; 24] {
+    pieces_with_sticker_count(2)
+}
+/// Returns a list of centers using 0..81 indexes
+const fn centers() -> [u8; 8] {
+    pieces_with_sticker_count(1)
+}
+
+const fn pieces_with_sticker_count<const N: usize>(sticker_count: u8) -> [u8; N] {
+    let mut ret = [0; N];
+    let mut i = 0;
+    let mut j = 0;
+    while i < 32 {
+        if count_stickers_for_index_81(j) == sticker_count {
+            ret[i] = j;
+            i += 1;
+        }
+        j += 1;
+    }
+    ret
+}
+
+const fn count_stickers_for_index_81(i: u8) -> u8 {
+    let [x, y, z, w] = [i % 3, (i / 3) % 3, (i / 9) % 3, i / 27];
+    (!x & 1) + (!y & 1) + (!z & 1) + (!w & 1)
+}
+
+/// Returns a list of pieces in 0..81 that are not corner pieces or the core.
+const fn non_corner_non_core_pieces() -> [u8; 64] {
+    let mut ret = [0; 64];
+    let mut i = 0;
+    let mut j = 0;
+    while i < 64 {
+        let [x, y, z, w] = [j % 3, (j / 3) % 3, (j / 9) % 3, j / 27];
+        j += 1;
+        if (x | y | z | w) & 1 == 0 {
+            continue; // corner
+        }
+        if j == 1 + 3 + 9 + 27 {
+            continue; //core
+        }
+        ret[i] = j;
+        i += 1;
+    }
+    ret
 }
 
 #[cfg(test)]
