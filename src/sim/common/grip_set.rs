@@ -33,6 +33,11 @@ impl GripSet {
         (self.len() == 2).then(|| self.unwrap_exactly_two())
     }
 
+    pub fn from_axis(axis: usize) -> Self {
+        debug_assert!(axis < 4);
+        Self(0b11 << (axis << 1))
+    }
+
     #[track_caller]
     pub fn unwrap_exactly_one(self) -> GripId {
         assert_eq!(1, self.len(), "expected one grip");
@@ -46,10 +51,15 @@ impl GripSet {
         [first, second].map(|id| GripId::new(id as u8))
     }
 }
+impl From<GripId> for GripSet {
+    fn from(value: GripId) -> Self {
+        Self(1 << value.id())
+    }
+}
 impl FromIterator<GripId> for GripSet {
     fn from_iter<T: IntoIterator<Item = GripId>>(iter: T) -> Self {
         iter.into_iter()
-            .map(|g| Self(1 << g.id()))
+            .map(Self::from)
             .fold(Self::NONE, |a, b| a | b)
     }
 }

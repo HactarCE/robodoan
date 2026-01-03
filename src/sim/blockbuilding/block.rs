@@ -161,7 +161,7 @@ impl Block {
             return only_g();
         }
 
-        if self.layers.is_axis_blocked(g.axis()) {
+        if self.layers.is_axis_blocked(g.axis_deprecated()) {
             return only_g();
         }
 
@@ -173,7 +173,7 @@ impl Block {
         StackVec::from_iter(
             (0..4)
                 .filter(|i| (blocked_axes_mask >> i) & 1 != 0)
-                .flat_map(GripId::pair_on_axis),
+                .flat_map(GripId::pair_on_axis_deprecated),
         )
         .unwrap()
     }
@@ -351,7 +351,10 @@ mod test {
                     for case in cases {
                         assert_eq!(center_orientations, count(case, ndim));
                     }
-                    for &g2 in grips.into_iter().filter(|&g2| g2.axis() != g1.axis()) {
+                    for &g2 in grips
+                        .into_iter()
+                        .filter(|&g2| g2.axis_deprecated() != g1.axis_deprecated())
+                    {
                         let blocked = cases.map(|b| b.expand_to_active_grip(g2));
                         let active = blocked.map(|b| b.restrict_to_active_grip(g2).unwrap());
                         let double_blocked =
@@ -360,10 +363,10 @@ mod test {
                         for &case in cases.as_flattened() {
                             assert_eq!(ridge_orientations, count(case, ndim));
                         }
-                        for &g3 in grips
-                            .into_iter()
-                            .filter(|&g3| g3.axis() != g1.axis() && g3.axis() != g2.axis())
-                        {
+                        for &g3 in grips.into_iter().filter(|&g3| {
+                            g3.axis_deprecated() != g1.axis_deprecated()
+                                && g3.axis_deprecated() != g2.axis_deprecated()
+                        }) {
                             for b in cases.as_flattened() {
                                 let blocked = b.expand_to_active_grip(g3);
                                 let active = blocked.restrict_to_active_grip(g3).unwrap();

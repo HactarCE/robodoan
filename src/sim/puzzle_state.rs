@@ -91,7 +91,7 @@ impl PuzzleState {
 
 const fn indices_for_grip(g: GripId) -> [u8; 26] {
     let mut strides = [1, 3, 9, 27];
-    strides.swap(g.axis(), 0);
+    strides.swap(g.axis_deprecated(), 0);
     let init = strides[0]
         * match g.signum() {
             1 => 0,
@@ -233,7 +233,7 @@ mod tests {
                 }
                 let set1: HashSet<_> = HashSet::from_iter(INDICES_FOR_GRIP[g1.id() as usize]);
                 let set2: HashSet<_> = HashSet::from_iter(INDICES_FOR_GRIP[g2.id() as usize]);
-                let expected_intersection = if g1.axis() == g2.axis() { 0 } else { 9 };
+                let expected_intersection = if g1.axis_deprecated() == g2.axis_deprecated() { 0 } else { 9 };
                 assert_eq!(expected_intersection, set1.intersection(&set2).count());
             }
         }

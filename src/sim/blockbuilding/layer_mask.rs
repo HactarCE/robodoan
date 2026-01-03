@@ -32,11 +32,13 @@ impl PackedLayers {
 
     #[must_use]
     pub const fn restrict_to_active_grip(self, g: GripId) -> Option<Self> {
-        Self::from_u16(self.to_u16() & !inactive_grip_mask(g)).if_nonempty_on_axis(g.axis())
+        Self::from_u16(self.to_u16() & !inactive_grip_mask(g))
+            .if_nonempty_on_axis(g.axis_deprecated())
     }
     #[must_use]
     pub const fn restrict_to_inactive_grip(self, g: GripId) -> Option<Self> {
-        Self::from_u16(self.to_u16() & !active_grip_mask(g)).if_nonempty_on_axis(g.axis())
+        Self::from_u16(self.to_u16() & !active_grip_mask(g))
+            .if_nonempty_on_axis(g.axis_deprecated())
     }
     #[must_use]
     pub const fn expand_to_active_grip(self, g: GripId) -> Self {
@@ -87,7 +89,7 @@ impl PackedLayers {
 
     #[inline]
     const fn bits_for_grip(self, g: GripId) -> u8 {
-        let bits = self.bits_for_axis(g.axis());
+        let bits = self.bits_for_axis(g.axis_deprecated());
         if g.id() & 1 == 0 { bits } else { rev3(bits) }
     }
 
@@ -209,7 +211,7 @@ const fn active_grip_mask(g: GripId) -> u16 {
 }
 const fn inactive_grip_mask(g: GripId) -> u16 {
     g.hint_assert_in_bounds();
-    (0b0111 << (g.axis() * 4)) ^ active_grip_mask(g)
+    (0b0111 << (g.axis_deprecated() * 4)) ^ active_grip_mask(g)
 }
 
 impl fmt::Debug for PackedLayers {
@@ -270,7 +272,7 @@ impl Mul<PackedLayers> for ElemId {
         let inv = self.inv();
         let mut resulting_bits = 0_u16;
         for g in [R, U, F, O] {
-            resulting_bits |= (rhs.bits_for_grip(inv * g) as u16) << (g.axis() * 4);
+            resulting_bits |= (rhs.bits_for_grip(inv * g) as u16) << (g.axis_deprecated() * 4);
         }
         PackedLayers::from_u16(resulting_bits)
     }
@@ -331,13 +333,15 @@ mod tests {
             .ok();
 
         let merge_grip = merge_axis.and_then(|axis| {
-            GripId::pair_on_axis(axis).into_iter().find(|&g| {
-                (l1.bits_for_grip(g) == 0b001 && l2.bits_for_grip(g) & 0b011 == 0b010)
-                    || (l2.bits_for_grip(g) == 0b001 && l1.bits_for_grip(g) & 0b011 == 0b010)
-            })
+            GripId::pair_on_axis_deprecated(axis)
+                .into_iter()
+                .find(|&g| {
+                    (l1.bits_for_grip(g) == 0b001 && l2.bits_for_grip(g) & 0b011 == 0b010)
+                        || (l2.bits_for_grip(g) == 0b001 && l1.bits_for_grip(g) & 0b011 == 0b010)
+                })
         });
 
-        let expected = merge_grip.map(|g| (l1 | l2, g.axis()));
+        let expected = merge_grip.map(|g| (l1 | l2, g.axis_deprecated()));
         let actual = l1.try_merge_with(l2);
 
         assert_eq!(expected, actual);

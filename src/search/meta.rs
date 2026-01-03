@@ -87,7 +87,7 @@ impl SolutionMetadata {
             .filter(|&axis| self.first_block.is_fully_blocked_on_axis(axis))
             .collect_array()
             .unwrap()
-            .map(GripId::pair_on_axis);
+            .map(GripId::pair_on_axis_deprecated);
         itertools::iproduct!([[g1, g2], [g2, g1]], ax1, ax2).map(move |([g1, g2], g3, g4)| {
             self.next_stage()
                 .with_right_grip(g1)

@@ -1,6 +1,7 @@
 #[macro_use]
 mod macros;
 pub mod mc4d;
+pub mod new;
 pub mod search;
 pub mod sim;
 pub mod stackvec;

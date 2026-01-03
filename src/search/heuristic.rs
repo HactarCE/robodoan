@@ -75,7 +75,7 @@ impl Heuristic {
                             ([b2, b1], b2_when_solved)
                         };
 
-                    let [g1, g2] = GripId::pair_on_axis(merge_axis);
+                    let [g1, g2] = GripId::pair_on_axis_deprecated(merge_axis);
                     let merge_grip = if head_when_solved.grip_status(g1) == GripStatus::Active {
                         g1
                     } else {

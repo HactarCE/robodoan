@@ -64,7 +64,7 @@ impl Group {
             HYPERCUBE_GRIPS.map(|g| {
                 HYPERCUBE_GRIPS
                     .iter()
-                    .position(|g2| g2.vec() == mat[g.axis()] * g.signum())
+                    .position(|g2| g2.vec() == mat[g.axis_deprecated()] * g.signum())
                     .map(|i| GripId::new(i as u8))
                     .unwrap()
             })

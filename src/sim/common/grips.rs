@@ -1,6 +1,8 @@
 use std::fmt;
 use std::ops::Mul;
 
+use crate::new::common::Axis;
+
 use super::elements::*;
 use super::group;
 use super::space::*;
@@ -34,15 +36,24 @@ impl GripId {
     pub const fn id(self) -> u8 {
         self.0
     }
-    pub const fn axis(self) -> usize {
+    #[inline]
+    pub const fn axis(self) -> Axis {
+        Axis::new(self.0 >> 1)
+    }
+    #[inline]
+    pub const fn axis_deprecated(self) -> usize {
         self.0 as usize >> 1
+    }
+    /// Returns `0` if the grip is positive or `1` if the grip is negative.
+    pub const fn sign_bit(self) -> bool {
+        self.0 & 1 != 0
     }
     pub const fn signum(self) -> i8 {
         if self.0 & 1 == 0 { 1 } else { -1 }
     }
 
     #[inline]
-    pub const fn pair_on_axis(axis: usize) -> [Self; 2] {
+    pub const fn pair_on_axis_deprecated(axis: usize) -> [Self; 2] {
         assert!(axis < 4, "axis out of range");
         let g1 = Self::new((axis as u8) << 1);
         [g1, g1.opposite()]
@@ -52,14 +63,10 @@ impl GripId {
     ///
     /// # Panics
     ///
-    /// Panics if `id` is out of range (must be strictly less 8).
+    /// Panics in debug mode if `id >= 8`.
     pub const fn new(id: u8) -> Self {
-        Self::try_new(id).expect("grip ID out of range")
-    }
-    /// Constructs a grip from an ID, or returns `None` if `id` is out of range
-    /// (must be strictly less than 8).
-    pub const fn try_new(id: u8) -> Option<Self> {
-        if id < 8 { Some(Self(id)) } else { None }
+        debug_assert!(id < 8, "grip ID out of range");
+        Self(id)
     }
     /// Hint to the compiler that the grip ID is within bounds.
     #[inline]
@@ -80,7 +87,7 @@ impl GripId {
 
     pub fn vec(self) -> Vec4 {
         let mut ret = ZERO;
-        ret[self.axis()] = self.signum();
+        ret[self.axis_deprecated()] = self.signum();
         ret
     }
 
@@ -91,7 +98,8 @@ impl GripId {
     }
 
     pub fn can_transform_grip_to_grip(self, start: GripId, end: GripId) -> bool {
-        self.axis() != start.axis() && self.axis() != end.axis()
+        self.axis_deprecated() != start.axis_deprecated()
+            && self.axis_deprecated() != end.axis_deprecated()
     }
 }
 
