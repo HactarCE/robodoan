@@ -3,6 +3,7 @@ use super::*;
 /// Heuristic for pruning search branches.
 #[derive(Debug, Default, Copy, Clone, PartialEq)]
 pub enum Heuristic {
+    TrivialCorrect,
     /// Prune aggressively; prune branches that are unlikely to result in a
     /// solution.
     Fast,
@@ -33,6 +34,7 @@ impl Heuristic {
     /// combinatoric approach.
     fn combinatoric_limit(self, expected_blocks: usize, remaining_moves: usize) -> usize {
         match self {
+            Heuristic::TrivialCorrect => (1 << remaining_moves) * expected_blocks,
             Heuristic::Fast => 1 << remaining_moves,
             Heuristic::Correct => (1 << remaining_moves) * expected_blocks,
         }
@@ -45,6 +47,10 @@ impl Heuristic {
         state: BlockSet,
         remaining_moves: usize,
     ) -> usize {
+        if self == Heuristic::TrivialCorrect {
+            return usize::MAX;
+        }
+
         let ndim = puzzle.ndim;
 
         let blocks_when_solved = state.blocks.map(|b| b.at_solved().layers());
