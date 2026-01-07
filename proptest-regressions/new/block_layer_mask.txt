@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 46eb159e875d5198c1c6dd4dd669b7b67e15bf1cb41dbe9e4e27ec03c28ac37a # shrinks to layer_mask = BlockLayerMask(15)
+cc dae39de5fd404272d73a7f992c35b5ea419899d436b46a7c43a7923863814560 # shrinks to layer_mask = 0x10E

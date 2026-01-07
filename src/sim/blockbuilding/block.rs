@@ -227,6 +227,8 @@ impl Mul<Block> for Twist {
     type Output = [Option<Block>; 2];
 
     fn mul(self, rhs: Block) -> Self::Output {
+        self.assert_is_valid();
+
         let [inside, outside] = rhs.split(self.grip);
         [
             inside.map(|b| Block {

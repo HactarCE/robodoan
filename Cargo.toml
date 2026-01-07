@@ -32,7 +32,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 rand_pcg = "0.9.0"
 
 [profile.dev]
-opt-level = 3 # debug assertions, but fast
+# opt-level = 3 # debug assertions, but fast
 
 [[bench]]
 name = "benchmark"

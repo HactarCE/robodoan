@@ -23,13 +23,22 @@ pub struct Twist {
     pub transform: ElemId,
 }
 impl Twist {
-    pub fn new(grip: GripId, transform: ElemId) -> Self {
+    pub const fn new(grip: GripId, transform: ElemId) -> Self {
         Self { grip, transform }
     }
 
     #[must_use]
     pub fn inv(self) -> Self {
         Self::new(self.grip, self.transform.inv())
+    }
+
+    pub(crate) fn assert_is_valid(&self) {
+        #[cfg(debug_assertions)]
+        assert_eq!(
+            self.grip,
+            self.transform * self.grip,
+            "transform does not fix grip",
+        );
     }
 }
 impl fmt::Debug for Twist {

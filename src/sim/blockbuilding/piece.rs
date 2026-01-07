@@ -3,7 +3,7 @@ use std::ops::Mul;
 
 use crate::sim::common::*;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Piece {
     /// Active grip set (changes as the piece moves around)
     pub grips: GripSet,
@@ -39,6 +39,8 @@ impl Mul<Piece> for Twist {
     type Output = Piece;
 
     fn mul(self, rhs: Piece) -> Self::Output {
+        self.assert_is_valid();
+
         // GRIP THEORY
         if rhs.grips.contains(self.grip) {
             self.transform * rhs

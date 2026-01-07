@@ -1,13 +1,16 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use rand_pcg::Pcg64Mcg;
-use robodoan::*;
+use robodoan::{
+    new::{BlockLayerMask, BlockList},
+    *,
+};
 
 const NDIM: usize = 4;
 
-fn exec_moves_on_blocks(init_state: BlockSet, twists: &[Twist]) -> BlockSet {
-    twists.iter().fold(init_state, |state, &twist| {
-        state.do_twist(twist, NDIM).unwrap()
-    })
+fn exec_moves_on_blocks(init_state: BlockList, twists: &[Twist]) -> BlockList {
+    twists
+        .iter()
+        .fold(init_state, |state, &twist| state.twist(twist))
 }
 
 fn exec_moves_on_state(mut state: PuzzleState, twists: &[Twist]) -> PuzzleState {
@@ -28,8 +31,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     let move_count = 32;
     let gen_random_moves = move || puzzle.random_moves(&mut rng, move_count);
 
-    let puzzle_with_2x2x2x2_block = BlockSet::default()
-        .add_block_with_setup_moves(puzzle, &[], Block::new_solved([], [R, U, F, O]).unwrap())
+    let puzzle_with_2x2x2x2_block = BlockList::default()
+        .add_block_with_setup_moves(&[], BlockLayerMask::from_bits_handle_empty(0xFF0))
         .unwrap();
 
     for (init_state, name) in [(puzzle_with_2x2x2x2_block, "2x2x2x2 block")] {

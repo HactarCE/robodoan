@@ -33,6 +33,17 @@ impl fmt::Display for GripId {
 }
 
 impl GripId {
+    pub const ALL: [Self; 8] = [
+        Self(0),
+        Self(1),
+        Self(2),
+        Self(3),
+        Self(4),
+        Self(5),
+        Self(6),
+        Self(7),
+    ];
+
     pub const fn id(self) -> u8 {
         self.0
     }

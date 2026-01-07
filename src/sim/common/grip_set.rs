@@ -3,7 +3,7 @@ use std::ops::{Add, AddAssign, BitAnd, BitOr, BitXor, Mul, Not, Sub, SubAssign};
 
 use crate::sim::common::*;
 
-#[derive(Default, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Default, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct GripSet(pub u8);
 impl GripSet {
     pub const NONE: GripSet = GripSet(0);

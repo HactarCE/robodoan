@@ -7,16 +7,17 @@ use crate::sim::*;
 
 /// Segment of a solution.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[repr(align(64))]
 pub struct Segment {
-    pub state: BlockSet, // 64 bytes
+    pub state: crate::new::BlockList, // 64 bytes
     pub segment_twists: StackVec<Twist, { crate::MAX_SOLUTION_SEGMENT_LEN }>, // 23 bytes
-    pub previous_segment: SegmentId, // 16 bytes
-    pub total_twist_count: usize, // 8 bytes
-    pub meta: SolutionMetadata, // 20 bytes
+    pub previous_segment: SegmentId,  // 16 bytes
+    pub total_twist_count: usize,     // 8 bytes
+    pub meta: SolutionMetadata,       // 20 bytes
 }
 impl fmt::Display for Segment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let block_count = self.state.blocks.len();
+        let block_count = self.state.len();
         let twist_count = self.total_twist_count;
         write!(f, "{block_count} blocks in {twist_count} ETM")
     }
@@ -31,7 +32,7 @@ impl Segment {
     #[must_use]
     pub fn push_twist(&self, twist: Twist, last_grip: Option<GripId>) -> Option<Self> {
         Some(Self {
-            state: self.state.do_twist(twist, 4)?, // 4D
+            state: self.state.twist(twist).if_nonempty()?, // 4D
             segment_twists: self.segment_twists.push(twist)?,
             previous_segment: self.previous_segment,
             total_twist_count: self.total_twist_count + (last_grip != Some(twist.grip)) as usize,
@@ -48,7 +49,7 @@ impl Segment {
         Some(Self {
             state: self
                 .state
-                .add_block_with_setup_moves(puzzle, setup_moves, new_block)?,
+                .add_block_with_setup_moves(setup_moves, new_block.layers().into())?,
             meta: new_meta,
             ..self.clone()
         })
@@ -77,7 +78,7 @@ impl Segment {
     fn sort_key(&self) -> impl Ord {
         (
             self.total_twist_count,
-            self.state.blocks.len(),
+            self.state.len(),
             self.previous_segment,
             self.segment_twists,
         )

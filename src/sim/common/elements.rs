@@ -104,7 +104,7 @@ impl ElemId {
 
     /// Returns the internal ID.
     #[inline]
-    pub fn id(self) -> u8 {
+    pub const fn id(self) -> u8 {
         self.0
     }
 

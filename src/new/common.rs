@@ -11,6 +11,8 @@ impl Axis {
     pub const Z: Self = Self(2);
     pub const W: Self = Self(3);
 
+    pub const ALL: [Self; 4] = [Self(0), Self(1), Self(2), Self(3)];
+
     pub const fn id(self) -> u8 {
         self.0
     }
@@ -28,9 +30,13 @@ impl Axis {
 
     /// Returns the pair of grips `[positive, negative]` on the axis.
     #[inline]
-    pub fn grips(self) -> [GripId; 2] {
+    pub const fn grips(self) -> [GripId; 2] {
         let g1 = GripId::new(self.0 << 1);
         [g1, g1.opposite()]
+    }
+
+    pub const fn char(self) -> char {
+        ['x', 'y', 'z', 'w'][self.0 as usize]
     }
 }
 

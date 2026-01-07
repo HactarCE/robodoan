@@ -86,7 +86,8 @@ impl Solver {
                 let twists = self.segments.solution_twists_for_segment(id);
                 let mut state = initial_state.clone();
                 state.do_twists(&twists);
-                let orientation_score = state.unoriented_pieces(segment.meta.last_layer());
+                // let orientation_score = state.unoriented_pieces(segment.meta.last_layer());
+                let orientation_score = [0; 3];
                 (twists.len(), orientation_score, twists)
             })
             .sorted();
@@ -139,7 +140,7 @@ impl Solver {
         });
         let init_blocks = new_segments
             .iter()
-            .map(|segment| segment.state.blocks.len())
+            .map(|segment| segment.state.len())
             .max()
             .unwrap_or(0);
 
@@ -155,7 +156,7 @@ impl Solver {
         self.segments.add_segments(step, new_segments);
 
         // Blockbuild
-        for target in (target_block_count..init_blocks).rev() {
+        for target in (target_block_count..init_blocks as usize).rev() {
             self.do_blockbuilding_step(target);
             // if self.steps.last().unwrap().is_empty() {
             //     log!(self.params, 1, "No solutions! Giving up ...");
@@ -302,7 +303,7 @@ pub fn dfs_blockbuild(
         ..
     } = solution_so_far;
 
-    if state.blocks.len() <= expected_blocks {
+    if state.len() <= expected_blocks as u8 {
         // found a solution!
         if let Some(count) = solutions_left_to_find {
             count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
@@ -325,11 +326,7 @@ pub fn dfs_blockbuild(
         return; // probably not solvable; give up
     }
 
-    let combined_layer_mask = state
-        .blocks
-        .iter()
-        .map(|b| b.layers())
-        .fold(PackedLayers::EMPTY, |a, b| a | b);
+    let combined_layer_mask = state.combined_layer_mask();
 
     let mut last_grips = segment_twists.iter().rev().map(|twist| twist.grip);
     let last_grip = last_grips.next();
@@ -341,7 +338,7 @@ pub fn dfs_blockbuild(
         if last_grip == Some(grip.id.opposite()) && second_to_last_grip == Some(grip.id) {
             return false; // opposite grip already moved
         }
-        if combined_layer_mask.grip_status(grip.id) == GripStatus::Inactive {
+        if combined_layer_mask.is_grip_inactive(grip.id) {
             return false; // doesn't move any block
         }
         // TODO: don't check opposite if it was 2nd-to-last move

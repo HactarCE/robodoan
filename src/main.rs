@@ -1,10 +1,16 @@
 use std::error::Error;
 
 use itertools::Itertools;
+use rand::SeedableRng;
 use robodoan::*;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let profile = Profile::Short;
+
+    // rayon::ThreadPoolBuilder::new()
+    //     .num_threads(1)
+    //     .build_global()
+    //     .unwrap();
 
     if let Some(filename) = std::env::args().nth(1) {
         let log_file_text = std::fs::read_to_string(&filename)?;
@@ -19,8 +25,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let mut results = vec![];
+    let mut rng = rand::rngs::SmallRng::seed_from_u64(123);
     for i in 0..10 {
-        let scramble = RUBIKS_4D.random_moves(&mut rand::rng(), 100);
+        let scramble = RUBIKS_4D.random_moves(&mut rng, 100);
         println!("\n\n---- STARTING SEARCH #{} ----\n", i + 1);
         println!("Scramble: {}", scramble.iter().join(" "));
         let t = std::time::Instant::now();

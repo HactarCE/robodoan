@@ -22,7 +22,7 @@ impl PackedLayers {
     pub const ALL: Self = Self::from_u16(0b_0111_0111_0111_0111);
 
     #[inline]
-    const fn to_u16(self) -> u16 {
+    pub const fn to_u16(self) -> u16 {
         u16::from_ne_bytes(self.0)
     }
     #[inline]
