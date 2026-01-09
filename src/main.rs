@@ -5,7 +5,7 @@ use rand::SeedableRng;
 use robodoan::*;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let profile = Profile::Short;
+    let profile = Profile::Fast;
 
     // rayon::ThreadPoolBuilder::new()
     //     .num_threads(1)

@@ -1,72 +1,214 @@
-use std::{
-    collections::{BTreeSet, HashSet},
-    fmt,
-};
+use std::{collections::BTreeSet, fmt, ops::Index};
 
 use itertools::Itertools;
 
-use crate::{ElemId, GripId, Piece, StackVec, Twist, new::block_layer_mask::BlockLayerMask};
+use crate::{
+    ElemId, GripId, Piece, Twist,
+    new::{block::Block, common::AxisSet},
+};
 
-const MAX_BLOCK_COUNT: usize = 20;
+const MAX_BLOCK_COUNT: u32 = 23;
 
-#[derive(Default, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Default, Clone, PartialEq, Eq, Hash)]
 pub struct BlockList {
+    /// List of blocks.
+    blocks: [Block; MAX_BLOCK_COUNT as usize],
+    /// Bitmask indicating, for each possible inner rank value, the indices of
+    /// blocks with that inner rank.
+    ranks: [BitSet32; 5],
+    /// Bitmask indicating which radix sort keys exist.
+    radix_sort_keys: BitSet96,
     /// Number of blocks.
     ///
     /// If this exceeds `MAX_BLOCK_COUNT`, then overflow has occurred.
-    len: u8,
-    attitudes: [ElemId; MAX_BLOCK_COUNT],
-    layer_masks: [BlockLayerMask; MAX_BLOCK_COUNT],
+    len: u32,
 }
+
 impl fmt::Debug for BlockList {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BlockList")
-            .field(
-                "blocks",
-                &std::iter::zip(self.attitudes, self.layer_masks)
-                    .take(self.len as usize)
-                    .collect_vec(),
-            )
+            .field("blocks", &self.blocks())
+            .field("ranks", &self.ranks)
+            .field("radix_sort_keys", &self.radix_sort_keys)
+            .field("len", &self.len)
             .finish()
     }
 }
+
+impl Index<u32> for BlockList {
+    type Output = Block;
+
+    fn index(&self, index: u32) -> &Self::Output {
+        debug_assert!(index < self.len);
+        &self.blocks[index as usize]
+    }
+}
+impl Index<u8> for BlockList {
+    type Output = Block;
+
+    fn index(&self, index: u8) -> &Self::Output {
+        &self[index as u32]
+    }
+}
+
 impl BlockList {
     pub const EMPTY: Self = Self {
+        blocks: [Block::EMPTY; MAX_BLOCK_COUNT as usize],
+        ranks: [BitSet32::EMPTY; 5],
+        radix_sort_keys: BitSet96::EMPTY,
         len: 0,
-        attitudes: [ElemId::IDENT; MAX_BLOCK_COUNT],
-        layer_masks: [BlockLayerMask::EMPTY; MAX_BLOCK_COUNT],
     };
 
+    #[deprecated]
+    pub fn radix_sort_keys(&self) -> String {
+        format!("{:?}", self.radix_sort_keys)
+    }
+
+    #[deprecated]
+    pub fn trunc(&mut self, n: usize) {
+        for i in n as _..self.len {
+            self.remove_block(i);
+        }
+        self.len = n as _;
+    }
+
+    /// Assertion that `std::mem::size_of::<Self>() == 128`.
+    ///
+    /// It doesn't matter that much, but it's nice to keep it small if we can.
+    #[allow(unused)]
+    const SIZE_ASSERT: [u8; 128] = [0; std::mem::size_of::<Self>()];
+
     /// Returns the number of blocks.
-    pub fn len(self) -> u8 {
+    pub fn len(&self) -> u32 {
         self.len
     }
 
     /// Returns whether the list is empty.
-    pub fn is_empty(self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
-    /// Applies a twist.
-    ///
-    /// Returns [`BlockList::EMPTY`] if there are too many blocks.
-    #[must_use]
-    pub fn twist(self, twist: Twist) -> Self {
-        let mut builder = BlockListBuilder::default();
+    /// Returns `Some(self)` if nonempty or `None` if empty.
+    pub fn if_nonempty(self) -> Option<Self> {
+        (!self.is_empty()).then_some(self)
+    }
 
-        // Split blocks and apply twist
-        for i in 0..self.len as usize {
-            let attitude = self.attitudes[i];
-            let [active, inactive] = self.layer_masks[i].split(twist.grip);
-            if !inactive.is_empty() {
-                builder.push(attitude, inactive);
-            }
-            if !active.is_empty() {
-                builder.push(twist.transform * attitude, twist.transform * active);
-            }
+    pub fn blocks(&self) -> &[Block] {
+        &self.blocks[..self.len as usize]
+    }
+
+    pub(crate) fn possible_pairings(&self) -> impl '_ + Iterator<Item = [Block; 2]> {
+        let body_ranks = (0..4).rev();
+        body_ranks
+            .flat_map(|body_rank| {
+                let head_rank = body_rank + 1;
+                let body_candidates = &self.ranks[body_rank as usize];
+                let head_candidates = &self.ranks[head_rank as usize];
+                itertools::iproduct!(body_candidates, head_candidates)
+            })
+            .map(|(body_index, head_index)| [self[body_index], self[head_index]])
+            .filter(|&[body, head]| !Block::merge(body.at_solved(), head.at_solved()).is_empty())
+    }
+
+    pub(crate) fn blocks_with_rank(&self, rank: u8) -> impl '_ + Iterator<Item = Block> {
+        debug_assert!(rank <= 4);
+        self.ranks[rank as usize].iter().map(|i| self[i])
+    }
+
+    /// Adds a block to the end of the list and updates various bookkeeping
+    /// fields.
+    ///
+    /// Returns an error and sets `self.len > MAX_BLOCK_COUNT` in case of
+    /// overflow.
+    pub(crate) fn push(&mut self, block: Block) -> Result<(), ()> {
+        let i = self.len;
+
+        // Update len
+        self.len += 1;
+        if self.len > MAX_BLOCK_COUNT {
+            return Err(());
         }
 
-        builder.build()
+        // Update ranks
+        self.ranks[block.inner_rank() as usize].set_from_0(i as u8);
+
+        // Update radix sort keys
+        self.radix_sort_keys.set_from_0(block.radix_sort_key());
+
+        // Update blocks
+        self.blocks[i as usize] = block;
+
+        Ok(())
+    }
+
+    /// Sets the block at the given index and updates the radix sort keys.
+    ///
+    /// The new block must have the same rank as the old block.
+    fn set_block_with_same_rank(&mut self, index: u32, new: Block) {
+        let old = self.blocks[index as usize];
+
+        debug_assert_ne!(old, new);
+        debug_assert_eq!(old.inner_rank(), new.inner_rank());
+
+        self.radix_sort_keys.clear_from_1(old.radix_sort_key());
+        self.radix_sort_keys.set_from_0(new.radix_sort_key());
+
+        self.blocks[index as usize] = new;
+    }
+    /// Sets the block at the given index and updates all assorted fields.
+    fn set_block(&mut self, index: u32, new: Block) {
+        let old = self.blocks[index as usize];
+
+        // Update ranks
+        self.ranks[old.inner_rank() as usize].clear_from_1(index as u8);
+        self.ranks[new.inner_rank() as usize].set_from_0(index as u8);
+
+        // Update radix sort keys
+        self.radix_sort_keys.clear_from_1(old.radix_sort_key());
+        self.radix_sort_keys.set_from_0(new.radix_sort_key());
+
+        // Update blocks
+        self.blocks[index as usize] = new;
+    }
+    /// Sets a block to empty and updates all assorted fields except `self.len`.
+    ///
+    /// This leaves the block list in an invalid state which must be cleaned up
+    /// using [`Self::cleanup()`].
+    fn remove_block(&mut self, index: u32) {
+        let old = self.blocks[index as usize];
+
+        // Update ranks
+        self.ranks[old.inner_rank() as usize].clear_from_1(index as u8);
+
+        // Update radix sort keys
+        self.radix_sort_keys.clear_from_1(old.radix_sort_key());
+
+        // Update blocks
+        self.blocks[index as usize] = Block::EMPTY;
+    }
+
+    /// Swaps two blocks, updating the various metadata.
+    ///
+    /// Panics in debug mode if `i != j`.
+    fn swap_blocks(&mut self, i: u32, j: u32) {
+        debug_assert_ne!(i, j);
+        let ri = self[i].inner_rank();
+        let rj = self[j].inner_rank();
+        let i_is_empty = self[i].is_empty();
+        let j_is_empty = self[j].is_empty();
+        self.blocks.swap(i as usize, j as usize);
+        if !i_is_empty {
+            self.ranks[ri as usize].clear_from_1(i as u8);
+        }
+        if !j_is_empty {
+            self.ranks[rj as usize].clear_from_1(j as u8);
+        }
+        if !i_is_empty {
+            self.ranks[ri as usize].set_from_0(j as u8);
+        }
+        if !j_is_empty {
+            self.ranks[rj as usize].set_from_0(i as u8);
+        }
     }
 
     /// Applies `setup_moves` to each piece in `block` and then adds all the
@@ -78,11 +220,9 @@ impl BlockList {
     /// Returns `None` if the puzzle state would have more than
     /// [`crate::MAX_BLOCKS`] blocks.
     #[must_use]
-    pub fn add_block_with_setup_moves(
-        self,
-        setup_moves: &[Twist],
-        layer_mask: BlockLayerMask,
-    ) -> Option<Self> {
+    pub fn add_block_with_setup_moves(&self, setup_moves: &[Twist], block: Block) -> Option<Self> {
+        let mut ret = self.clone();
+
         // TODO: revisit this and optimize it
 
         // BlockListBuilder::
@@ -95,9 +235,9 @@ impl BlockList {
         //     })
         // })
 
-        // TODO: extract into function on BlockLayerMask
-        let pieces_from_block = |layer_mask: BlockLayerMask| {
-            let mut blocks = vec![layer_mask];
+        // TODO: extract into function on Block
+        let pieces_from_block_at_solved = |block: Block| {
+            let mut blocks = vec![block];
             for g in GripId::ALL {
                 // TODO: optimize this
                 blocks = blocks
@@ -111,124 +251,115 @@ impl BlockList {
                 .map(|b| Piece::new_solved(b.active_grips().iter()))
         };
 
-        let mut new_pieces = pieces_from_block(layer_mask).collect::<BTreeSet<Piece>>();
-        for i in 0..self.len as usize {
-            let old_block_at_solved = self.attitudes[i].inv() * self.layer_masks[i];
-            for piece in pieces_from_block(old_block_at_solved) {
+        let mut new_pieces = pieces_from_block_at_solved(block).collect::<BTreeSet<Piece>>();
+        for i in 0..self.len {
+            for piece in pieces_from_block_at_solved(self[i]) {
                 new_pieces.remove(&piece);
             }
         }
 
         let init_piece = |new_piece| setup_moves.iter().fold(new_piece, |p, &twist| twist * p);
 
-        let mut builder = BlockListBuilder::from_block_list(self);
         for piece in new_pieces {
-            let p = init_piece(piece);
-            builder.push(p.attitude, BlockLayerMask::from_piece(p));
+            let transformed_piece = init_piece(piece);
+            ret.push(transformed_piece.attitude * Block::from_piece(piece))
+                .ok()?;
         }
 
-        builder.build().if_nonempty()
-    }
+        ret.cleanup();
 
-    pub fn if_nonempty(self) -> Option<Self> {
-        (!self.is_empty()).then_some(self)
-    }
-
-    pub fn combined_layer_mask(self) -> BlockLayerMask {
-        self.layer_masks[..self.len as usize]
-            .iter()
-            .fold(BlockLayerMask::EMPTY, |a, &b| a | b)
-    }
-
-    /// Returns a list of `[body, head]` pairings. Each block contains its
-    /// attitude and its layer mask when solved.
-    pub fn pairings(self) -> impl Iterator<Item = [(ElemId, BlockLayerMask); 2]> {
-        // self.layer_masks
-        [todo!()].into_iter()
-    }
-
-    pub fn layer_masks_at_solved(self) -> StackVec<BlockLayerMask, MAX_BLOCK_COUNT> {
-        let mut ret = StackVec::new();
-        // TODO: maybe cache these? (doesn't change much when doing twists)
-        for i in 0..self.len {
-            // TODO: inline this multiplication to remove double-invert
-            ret = ret
-                .push(self.attitudes[i as usize].inv() * self.layer_masks[i as usize])
-                .unwrap();
+        #[cfg(debug_assertions)]
+        {
+            let old = ret.clone();
+            ret.cleanup();
+            assert_eq!(ret, old);
         }
+
+        ret.if_nonempty()
+    }
+
+    /// Applies a twist.
+    ///
+    /// Returns [`BlockList::EMPTY`] if there are too many blocks.
+    #[must_use]
+    pub fn twist(&self, twist: Twist) -> BlockList {
+        debug_assert_ne!(twist.transform, ElemId::IDENT);
+
+        let mut ret = self.clone();
+
+        // Split blocks and apply twist.
+        for i in 0..ret.len {
+            let block = ret[i];
+            let [active, inactive] = block.split(twist.grip);
+            if active.is_empty() {
+                continue; // no change
+            } else {
+                let active = twist.transform * active;
+                if inactive.is_empty() {
+                    ret.set_block_with_same_rank(i, active); // all active
+                } else {
+                    ret.set_block_with_same_rank(i, inactive); // inactive has same inner rank
+                    if ret.push(active).is_err() {
+                        return Self::EMPTY; // indicate error
+                    }
+                }
+            }
+        }
+
+        ret.cleanup();
+
+        #[cfg(debug_assertions)]
+        {
+            let old = ret.clone();
+            ret.cleanup();
+            assert_eq!(ret, old);
+        }
+
         ret
     }
 
-    #[must_use]
-    fn replace_overflow_with_empty(self) -> Self {
-        if self.len as usize > MAX_BLOCK_COUNT {
-            Self::EMPTY
-        } else {
-            self
-        }
-    }
-
-    #[must_use]
-    fn push_unchecked(mut self, attitude: ElemId, layer_mask: BlockLayerMask) -> Self {
-        let i = self.len as usize;
-        if i < MAX_BLOCK_COUNT {
-            self.attitudes[i] = attitude;
-            self.layer_masks[i] = layer_mask;
-        }
-        self.len += 1;
-        self
-    }
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
-pub struct BlockListBuilder {
-    /// List of blocks, unsorted.
-    inner: BlockList,
-    /// Bitmask indicating the rank of each block.
-    rank_masks: [BitSet32; 5],
-}
-impl BlockListBuilder {
-    fn from_block_list(list: BlockList) -> Self {
-        let mut ret = Self::default();
-        for i in 0..list.len as usize {
-            ret.push(list.attitudes[i], list.layer_masks[i]);
-        }
-        ret
-    }
-
-    /// Adds a block to the list and records its rank.
-    fn push(&mut self, attitude: ElemId, layer_mask: BlockLayerMask) {
-        debug_assert!(!layer_mask.is_empty());
-
-        // Sort blocks by rank.
-        let rank = layer_mask.rank() as usize;
-        let i = self.inner.len.min(MAX_BLOCK_COUNT as u8);
-        self.inner = self.inner.push_unchecked(attitude, layer_mask);
-        self.rank_masks[rank].set(i);
-    }
-
-    /// Builds the list and merges blocks.
-    fn build(mut self) -> BlockList {
-        // Handle overflow
-        if self.inner.len as usize > MAX_BLOCK_COUNT {
-            return BlockList::EMPTY;
-        }
-
+    /// Merges blocks and sorts them, canonicalizing the whole list.
+    fn cleanup(&mut self) {
         // Merge blocks until we reach a fixed point
         while self.merge_blocks() {}
 
-        // Canonicalize by sorting blocks
-        self.sort_blocks()
-    }
-
-    fn piece_count(&self) -> usize {
-        let mut total = 0;
-        for r in &self.rank_masks {
-            for i in r.clone() {
-                total += self.inner.layer_masks[i as usize].piece_count();
+        // Sort blocks by `radix_sort_key`.
+        #[cfg(debug_assertions)]
+        let mut max_index = 0;
+        for i in 0..self.len {
+            loop {
+                let block = self[i];
+                if block.is_empty() {
+                    break;
+                }
+                let j = self.radix_sort_keys.bits_before(block.radix_sort_key()) as u32;
+                #[cfg(debug_assertions)]
+                {
+                    max_index = std::cmp::max(max_index, j);
+                }
+                if i == j {
+                    break;
+                } else {
+                    self.swap_blocks(i, j);
+                }
             }
         }
-        total
+
+        #[cfg(debug_assertions)]
+        {
+            self.len = max_index + 1;
+            debug_assert_eq!(self.len, self.radix_sort_keys.count_ones());
+            debug_assert_eq!(
+                self.len,
+                self.ranks.iter().map(|r| r.count_ones()).sum::<u32>(),
+            );
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            self.len = self.radix_sort_keys.count_ones()
+        }
+
+        debug_assert!(self.blocks().is_sorted_by_key(|b| b.radix_sort_key()));
     }
 
     /// Merges all blocks that can be merged.
@@ -238,59 +369,28 @@ impl BlockListBuilder {
     fn merge_blocks(&mut self) -> bool {
         let mut any_merged = false;
 
-        #[cfg(debug_assertions)]
-        let old_piece_count = self.piece_count();
-
         // It's important to iterate from largest to smallest rank, so that we
-        // prioritize blocks where attitudes must match exactly (e.g.,
-        // corner-edge) vs. blocks where many attitudes are indistinguishable
-        // (e.g., center-core).
+        // prioritize blocks where attitudes must match exactly (like
+        // corner+edge) instead of blocks where many attitudes are
+        // indistinguishable (like center+core).
         for body_rank in (0..4).rev() {
             let head_rank = body_rank + 1;
-            let body_candidates = self.rank_masks[body_rank as usize].clone();
+            let body_candidates = self.ranks[body_rank as usize].clone();
             for body_index in body_candidates {
-                let body_attitude = self.inner.attitudes[body_index as usize];
-                let body_layer_mask = self.inner.layer_masks[body_index as usize];
+                let body = self[body_index];
 
-                let head_candidates = self.rank_masks[head_rank as usize].clone();
+                let head_candidates = self.ranks[head_rank as usize].clone();
                 'loop_per_head: for head_index in head_candidates {
-                    let head_attitude = self.inner.attitudes[head_index as usize];
-                    let head_layer_mask = self.inner.layer_masks[head_index as usize];
+                    let head = self[head_index];
 
-                    // TODO: try with & without branching
+                    let merged = Block::merge(body, head);
 
-                    let attitude_matches = match body_rank {
-                        // core + center always matches
-                        0 => true,
-
-                        // center + ridge matches if the ridge attitude preserves the grip of the center
-                        1 => {
-                            let g = body_layer_mask.active_axes().unwrap_one().grips()[0];
-                            head_attitude * g == g
-                        }
-
-                        // ridge + edge has 4 indistinguishable ridge attitudes
-                        2 => get_ridge_indistinguishable_subgroup(body_layer_mask)
-                            .into_iter()
-                            .any(|e| e * body_attitude == head_attitude),
-
-                        // edge + corner requires exact attitude match
-                        3 => body_attitude == head_attitude,
-
-                        _ => unreachable!(),
-                    };
-
-                    let merged_layer_mask = body_layer_mask.merge(head_layer_mask);
-                    if attitude_matches && !merged_layer_mask.is_empty() {
+                    if !merged.is_empty() {
                         any_merged = true;
-                        // Replace head (attitude stays the same)
-                        self.inner.layer_masks[head_index as usize] = merged_layer_mask;
-                        // Remove body
-                        self.rank_masks[body_rank].clear(body_index);
-                        self.inner.layer_masks[body_index as usize] = BlockLayerMask::EMPTY;
-
-                        #[cfg(debug_assertions)]
-                        debug_assert_eq!(old_piece_count, self.piece_count(), "lost pieces");
+                        // Remove head
+                        self.remove_block(head_index as u32);
+                        // Replace body (inner rank stays the same)
+                        self.set_block_with_same_rank(body_index as u32, merged);
 
                         break 'loop_per_head;
                     }
@@ -298,41 +398,6 @@ impl BlockListBuilder {
             }
         }
         any_merged
-    }
-
-    /// Sorts blocks by bit pattern using radix sort and removes empty blocks.
-    ///
-    /// Returns the result instead of modifying `self`.
-    #[inline]
-    #[must_use]
-    fn sort_blocks(self) -> BlockList {
-        let mut ret = BlockList::default();
-
-        // Assemble a list of blocks, indexed by radix sort key.
-        let mut blocks_present = BitSet96::default();
-        for i in 0..self.inner.len {
-            let layer_mask = self.inner.layer_masks[i as usize];
-            if !layer_mask.is_empty() {
-                debug_assert!(
-                    !blocks_present.get(layer_mask.radix_sort_key()),
-                    "duplicate radix sort key",
-                );
-                blocks_present.set(layer_mask.radix_sort_key());
-                ret.len += 1;
-            }
-        }
-
-        // Add blocks in order.
-        for i in 0..self.inner.len {
-            let layer_mask = self.inner.layer_masks[i as usize];
-            if !layer_mask.is_empty() {
-                let j = blocks_present.bits_before(layer_mask.radix_sort_key()) as usize;
-                ret.attitudes[j] = self.inner.attitudes[i as usize];
-                ret.layer_masks[j] = layer_mask;
-            }
-        }
-
-        ret
     }
 }
 
@@ -347,8 +412,14 @@ impl fmt::Debug for BitSet32 {
     }
 }
 impl BitSet32 {
+    pub const EMPTY: Self = Self(0);
+
     pub fn is_empty(&self) -> bool {
         self.0 == 0
+    }
+    pub fn get(&self, index: u8) -> bool {
+        debug_assert!(index < 32);
+        self.0 & (1 << index) != 0
     }
     pub fn set(&mut self, index: u8) {
         debug_assert!(index < 32);
@@ -358,6 +429,23 @@ impl BitSet32 {
         debug_assert!(index < 32);
         self.0 &= !(1 << (index % 32));
     }
+
+    /// Clears a bit, panicking in debug mode if it was already cleared.
+    pub fn clear_from_1(&mut self, index: u8) {
+        debug_assert!(self.get(index));
+        self.clear(index);
+    }
+    /// Sets a bit, panicking in debug mode if it was already set.
+    pub fn set_from_0(&mut self, index: u8) {
+        debug_assert!(!self.get(index));
+        self.set(index);
+    }
+
+    /// Returns the number of bits set.
+    pub fn count_ones(&self) -> u32 {
+        self.0.count_ones()
+    }
+
     /// Returns and clears the next set index.
     ///
     /// Panics if empty.
@@ -366,6 +454,20 @@ impl BitSet32 {
         debug_assert!(i < 96);
         self.clear(i);
         i
+    }
+
+    /// Returns an iterator over the set bits in the bit set.
+    pub fn iter(&self) -> BitSetIter<Self> {
+        self.clone().into_iter()
+    }
+}
+impl IntoIterator for &BitSet32 {
+    type Item = u8;
+
+    type IntoIter = BitSetIter<BitSet32>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 impl IntoIterator for BitSet32 {
@@ -392,21 +494,41 @@ impl fmt::Debug for BitSet96 {
     }
 }
 impl BitSet96 {
+    pub const EMPTY: Self = Self([0; 3]);
+
     pub fn is_empty(&self) -> bool {
         self.0 == [0; 3]
-    }
-    pub fn set(&mut self, index: u8) {
-        debug_assert!(index < 96);
-        self.0[index as usize / 32] |= 1 << (index % 32);
     }
     pub fn get(&self, index: u8) -> bool {
         debug_assert!(index < 96);
         self.0[index as usize / 32] & (1 << (index % 32)) != 0
     }
+    pub fn set(&mut self, index: u8) {
+        debug_assert!(index < 96);
+        self.0[index as usize / 32] |= 1 << (index % 32);
+    }
     pub fn clear(&mut self, index: u8) {
         debug_assert!(index < 96);
         self.0[index as usize / 32] &= !(1 << (index % 32));
     }
+
+    /// Clears a bit, panicking in debug mode if it was already cleared.
+    pub fn clear_from_1(&mut self, index: u8) {
+        debug_assert!(self.get(index));
+        self.clear(index);
+    }
+    /// Sets a bit, panicking in debug mode if it was already set.
+    pub fn set_from_0(&mut self, index: u8) {
+        debug_assert!(!self.get(index));
+        self.set(index);
+    }
+
+    /// Returns the number of bits set.
+    pub fn count_ones(&self) -> u32 {
+        let [b0, b1, b2] = self.0;
+        b0.count_ones() + b1.count_ones() + b2.count_ones()
+    }
+
     /// Returns and clears the next set index.
     ///
     /// Panics if empty.
@@ -435,6 +557,20 @@ impl BitSet96 {
             + (self.0[1] & mask_lowest_n_bits(i1)).count_ones() as u8
             + (self.0[2] & mask_lowest_n_bits(i2)).count_ones() as u8
     }
+
+    /// Returns an iterator over the set bits in the bit set.
+    pub fn iter(&self) -> BitSetIter<Self> {
+        self.clone().into_iter()
+    }
+}
+impl IntoIterator for &BitSet96 {
+    type Item = u8;
+
+    type IntoIter = BitSetIter<BitSet96>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
 }
 impl IntoIterator for BitSet96 {
     type Item = u8;
@@ -449,6 +585,7 @@ impl IntoIterator for BitSet96 {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct BitSetIter<B> {
     b: B,
     f: fn(&mut B) -> Option<u8>,
@@ -469,8 +606,8 @@ fn mask_lowest_n_bits(n: u8) -> u32 {
     }
 }
 
-fn get_ridge_indistinguishable_subgroup(layer_mask: BlockLayerMask) -> [ElemId; 4] {
-    match layer_mask.active_axes().bits() {
+fn get_ridge_indistinguishable_subgroup(active_axes: AxisSet) -> [ElemId; 4] {
+    match active_axes.bits() {
         0b0011 => *crate::XY_STABILIZER,
         0b0110 => *crate::YZ_STABILIZER,
         0b1100 => *crate::ZW_STABILIZER,
@@ -523,12 +660,12 @@ mod tests {
 
     #[test]
     fn test_add_block() {
-        let init_block = BlockLayerMask::from_bits_handle_empty(0x0FF);
+        let init_block = Block::from_layer_bits(0x0FF);
         let state = BlockList::default()
             .add_block_with_setup_moves(&[], init_block)
             .unwrap();
         assert_eq!(state.len(), 1);
-        assert_eq!(state.layer_masks[0], init_block);
+        assert_eq!(state[0_u32], init_block);
 
         const RU: Twist = Twist::new(crate::R, crate::WZ);
         const IR: Twist = Twist::new(crate::I, crate::ZY);
@@ -536,5 +673,18 @@ mod tests {
             .add_block_with_setup_moves(&[RU, IR], init_block)
             .unwrap();
         assert_eq!(state.len(), 3);
+    }
+
+    #[test]
+    fn test_merge_2223() {
+        let head = Block::from_layer_bits(0xc73);
+        let body = Block::from_layer_bits(0x4fb);
+        dbg!(head, body);
+        let mut list = BlockList::default();
+        list.push(body).unwrap();
+        list.push(head).unwrap();
+        list.cleanup();
+        dbg!(Block::merge(body, head));
+        assert_eq!(list.len(), 1);
     }
 }

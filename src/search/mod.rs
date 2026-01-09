@@ -298,12 +298,12 @@ pub fn dfs_blockbuild(
     remaining_parallel_depth: usize,
 ) {
     let Segment {
-        state,
+        ref state,
         segment_twists,
         ..
     } = solution_so_far;
 
-    if state.len() <= expected_blocks as u8 {
+    if state.len() <= expected_blocks as u32 {
         // found a solution!
         if let Some(count) = solutions_left_to_find {
             count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
@@ -321,12 +321,10 @@ pub fn dfs_blockbuild(
 
     if !params
         .heuristic
-        .might_be_solvable(puzzle, state, expected_blocks, remaining_depth)
+        .might_be_solvable(puzzle, &state, expected_blocks, remaining_depth)
     {
         return; // probably not solvable; give up
     }
-
-    let combined_layer_mask = state.combined_layer_mask();
 
     let mut last_grips = segment_twists.iter().rev().map(|twist| twist.grip);
     let last_grip = last_grips.next();
@@ -338,7 +336,7 @@ pub fn dfs_blockbuild(
         if last_grip == Some(grip.id.opposite()) && second_to_last_grip == Some(grip.id) {
             return false; // opposite grip already moved
         }
-        if combined_layer_mask.is_grip_inactive(grip.id) {
+        if state.blocks().iter().all(|b| b.is_grip_inactive(grip.id)) {
             return false; // doesn't move any block
         }
         // TODO: don't check opposite if it was 2nd-to-last move

@@ -3,6 +3,8 @@ use std::ops::Mul;
 
 use itertools::Itertools;
 
+use crate::new::common::Axis;
+
 use super::group;
 use super::space::*;
 
@@ -66,8 +68,27 @@ pub static HYPERCUBE_ROTATIONS: [ElemId; 192] = elems_iter().collect_array().unw
 pub static CUBE_ROTATIONS: [ElemId; 24] = *W_STABILIZER;
 
 /// Element from the grip group.
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ElemId(u8);
+#[derive(Default, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ElemId(pub u8);
+
+impl fmt::Debug for ElemId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use crate::{F, GripId, O, R, U};
+
+        let initial_grips = [R, U, F, O];
+        let permuted_grips = initial_grips.map(|g| *self * g);
+
+        fn display_grips(grips: [GripId; 4]) -> String {
+            grips.into_iter().map(|g| g.char()).collect()
+        }
+
+        let id = self.id();
+        let initial_grips = display_grips(initial_grips);
+        let permuted_grips = display_grips(permuted_grips);
+
+        write!(f, "{id:>3}=[{initial_grips}->{permuted_grips}]")
+    }
+}
 
 impl ElemId {
     pub const IDENT: Self = IDENT;
@@ -122,27 +143,36 @@ impl ElemId {
     pub unsafe fn from_id_unchecked(id: u8) -> Self {
         Self(id)
     }
+
+    /// Returns an iterator over all element IDs.
+    pub fn iter_all() -> impl Iterator<Item = Self> {
+        (0..group::ELEM_COUNT as u8).map(Self)
+    }
 }
 
 impl fmt::Display for ElemId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut grips_moved = super::grips::HYPERCUBE_GRIPS
+        use crate::{F, O, R, U};
+
+        let e = *self;
+
+        let moving_grips = [R, U, F, O]
             .into_iter()
-            .filter(|&g| *self * g != g);
-        if let Some(g1) = grips_moved.next() {
-            let g2 = *self * g1;
-            let g3 = *self * g2;
-            write!(f, "{g1} -> {g2} -> {g3}")?;
-            if g1 == g3
-                && let Some(g4) = grips_moved.find(|&g| g != g2)
-            {
-                let g5 = *self * g4;
-                let g6 = *self * g5;
-                write!(f, ", {g4} -> {g5} -> {g6}")?;
+            .filter(|&g| e * g == g)
+            .collect_vec();
+        match moving_grips.as_slice() {
+            &[a, _] => {
+                let ea = e * a;
+                if a.axis() == ea.axis() {
+                    // 180-degree axis-aligned rotation
+                    let eea = e * ea;
+                    write!(f, "{a}->{ea}->{eea}")
+                } else {
+                    // 90-degree axis-aligned rotation
+                    write!(f, "{a}->{ea}")
+                }
             }
-            Ok(())
-        } else {
-            write!(f, "{self:?}")
+            _ => write!(f, "{self:?}"), // fallback to debug impl
         }
     }
 }

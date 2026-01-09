@@ -1,6 +1,8 @@
 use cgmath::Transform;
 use itertools::Itertools;
 
+use crate::new::common::Axis;
+
 use super::elements::ElemId;
 use super::grips::{GripId, HYPERCUBE_GRIPS};
 use super::space::*;
@@ -18,6 +20,7 @@ pub struct Group {
     pub mul_elem_elem: [[ElemId; ELEM_COUNT]; ELEM_COUNT],
     pub mul_elem_vec: [[Vec4; 4]; ELEM_COUNT],
     pub mul_elem_grip: [[GripId; 8]; ELEM_COUNT],
+    pub mul_elem_axis: [u8; ELEM_COUNT],
 }
 impl Group {
     pub fn bc4() -> Self {
@@ -70,6 +73,13 @@ impl Group {
             })
         });
 
+        let mul_elem_axis = mul_elem_grip.map(|grips| {
+            grips[0].axis().id()
+                | (grips[2].axis().id() << 2)
+                | (grips[4].axis().id() << 4)
+                | (grips[6].axis().id() << 6)
+        });
+
         let inv_elem = matrices
             .iter()
             .map(|m| {
@@ -90,6 +100,7 @@ impl Group {
             mul_elem_elem,
             mul_elem_vec,
             mul_elem_grip,
+            mul_elem_axis,
         }
     }
 }

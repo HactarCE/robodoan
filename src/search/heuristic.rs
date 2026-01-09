@@ -21,7 +21,7 @@ impl Heuristic {
     pub fn might_be_solvable(
         self,
         puzzle: &Puzzle,
-        state: BlockList,
+        state: &BlockList,
         expected_blocks: usize,
         remaining_moves: usize,
     ) -> bool {
@@ -46,80 +46,47 @@ impl Heuristic {
     fn grip_theoretic_limit(
         self,
         puzzle: &Puzzle,
-        state: BlockList,
+        state: &BlockList,
         remaining_moves: usize,
     ) -> usize {
         if self == Heuristic::TrivialCorrect {
             return usize::MAX;
         }
 
-        // let blocks_when_solved = state.layer_masks_at_solved();
-        // let mut max_pairings_possible = 0;
-        // for (i, (b1, b1_when_solved)) in
-        //     std::iter::zip(state.blocks, blocks_when_solved).enumerate()
-        // {
-        //     // assume `b1` can be made into a larger block within 3 moves.
-        //     // assume other moves are used to make more blocks.
-        //     let mut max_blocks_solvable_using_b1 = remaining_moves.saturating_sub(2);
+        let mut max_pairings_possible = 0;
 
-        //     'b2: for (b2, b2_when_solved) in
-        //         std::iter::zip(state.blocks, blocks_when_solved).skip(i + 1)
-        //     {
-        //         if let Some((_combined_block, merge_axis)) =
-        //             b1_when_solved.try_merge_with(b2_when_solved)
-        //         {
-        //             let ([body, head], head_when_solved) =
-        //                 if b1.layers().has_middle_slice_on_axis(merge_axis) {
-        //                     ([b1, b2], b1_when_solved)
-        //                 } else {
-        //                     ([b2, b1], b2_when_solved)
-        //                 };
+        for body_rank in 0..4 {
+            let head_rank = body_rank + 1;
+            for body in state.blocks_with_rank(body_rank) {
+                // assume `body` can be made into a larger block within 3 moves.
+                // assume other moves are used to make more blocks.
+                let mut max_blocks_solvable_using_body = remaining_moves.saturating_sub(2);
 
-        //             let [g1, g2] = GripId::pair_on_axis_deprecated(merge_axis);
-        //             let merge_grip = if head_when_solved.grip_status(g1) == GripStatus::Active {
-        //                 g1
-        //             } else {
-        //                 g2
-        //             };
+                'each_head: for head in state.blocks_with_rank(head_rank) {
+                    match crate::new::Block::moves_needed_to_pair(body, head) {
+                        None => continue,
+                        Some(1) => {
+                            // `body` and `head` can be paired in 1 move.
+                            // assume other moves are used to make more blocks.
+                            max_blocks_solvable_using_body = remaining_moves;
+                            break 'each_head; // not gonna do better than that
+                        }
+                        Some(2) => {
+                            // `body` and `head` can be paired in 2 moves.
+                            // assume other moves are used to make more blocks
+                            max_blocks_solvable_using_body = remaining_moves - 1;
+                        }
+                        Some(3) => {
+                            max_blocks_solvable_using_body = remaining_moves - 2;
+                        }
+                        _ => (),
+                    }
+                }
 
-        //             let head_attitude = head.attitude();
-        //             let mut body_attitudes = body.indistinguishable_attitudes(ndim);
-        //             debug_assert!(
-        //                 !body_attitudes.any(|a| a == head_attitude),
-        //                 "should already be merged",
-        //             );
+                max_pairings_possible += max_blocks_solvable_using_body;
+            }
+        }
 
-        //             let head_merge_grip = head.attitude() * merge_grip;
-        //             let body_merge_grips =
-        //                 body.mul_indistinguishable_attides_by_grip(ndim, merge_grip);
-
-        //             if body_merge_grips.contains(&head_merge_grip) {
-        //                 // `b1` and `b2` can be paired in 1 move.
-        //                 // assume other moves are used to make more blocks.
-        //                 max_blocks_solvable_using_b1 = remaining_moves;
-        //                 break 'b2; // not gonna do better than that
-        //             }
-
-        //             if remaining_moves > 1 {
-        //                 for g in b1.layers().separating_axes(b2.layers()).iter() {
-        //                     if body_merge_grips
-        //                         .iter()
-        //                         .any(|&m| g.can_transform_grip_to_grip(head_merge_grip, m))
-        //                     {
-        //                         // `b1` and `b2` can be paired in 2 moves.
-        //                         // assume other moves are used to make more blocks
-        //                         max_blocks_solvable_using_b1 = remaining_moves - 1;
-        //                     }
-        //                 }
-        //             }
-        //         }
-        //     }
-
-        //     max_pairings_possible += max_blocks_solvable_using_b1;
-        // }
-
-        // max_pairings_possible
-
-        usize::MAX // TODO
+        max_pairings_possible
     }
 }

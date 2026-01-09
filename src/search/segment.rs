@@ -27,7 +27,7 @@ impl Segment {
     ///
     /// It doesn't matter that much, but it's nice to keep it small if we can.
     #[allow(unused)]
-    const SIZE_ASSERT: [u8; 128] = [0; std::mem::size_of::<Self>()];
+    const SIZE_ASSERT: [u8; 192] = [0; std::mem::size_of::<Self>()];
 
     #[must_use]
     pub fn push_twist(&self, twist: Twist, last_grip: Option<GripId>) -> Option<Self> {
@@ -56,7 +56,7 @@ impl Segment {
     }
     pub fn next_step(&self, previous_segment: SegmentId) -> Self {
         Self {
-            state: self.state,
+            state: self.state.clone(),
             segment_twists: StackVec::new(),
             previous_segment,
             total_twist_count: self.total_twist_count,

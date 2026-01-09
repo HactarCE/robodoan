@@ -33,6 +33,7 @@ impl GripSet {
         (self.len() == 2).then(|| self.unwrap_exactly_two())
     }
 
+    // TODO: extract into `impl From<Axis>`
     pub fn from_axis(axis: usize) -> Self {
         debug_assert!(axis < 4);
         Self(0b11 << (axis << 1))

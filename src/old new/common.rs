@@ -1,6 +1,6 @@
-use std::ops::{BitAnd, BitOr, Mul};
+use std::ops::{BitAnd, BitOr};
 
-use crate::{ElemId, GripId, common::CHIRAL_BC4};
+use crate::GripId;
 
 /// Axis (0..4)
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -40,14 +40,6 @@ impl Axis {
     }
 }
 
-impl Mul<Axis> for ElemId {
-    type Output = Axis;
-
-    fn mul(self, rhs: Axis) -> Self::Output {
-        Axis::new((CHIRAL_BC4.mul_elem_axis[self.id() as usize] >> (rhs.id() * 2)) & 0b11)
-    }
-}
-
 /// Axis set (4 bits)
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AxisSet(u8);
@@ -81,11 +73,6 @@ impl AxisSet {
         assert_eq!(self.len(), 1, "multiple active axes");
         Axis(self.0.trailing_zeros() as u8)
     }
-
-    /// Returns whether the axis is in the set
-    pub fn contains(self, axis: Axis) -> bool {
-        self.0 & (1 << axis.id()) != 0
-    }
 }
 impl From<Axis> for AxisSet {
     fn from(value: Axis) -> Self {
@@ -104,19 +91,5 @@ impl BitAnd for AxisSet {
 
     fn bitand(self, rhs: Self) -> Self::Output {
         Self(self.0 & rhs.0)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_mul_elem_axis() {
-        for e in ElemId::iter_all() {
-            for a in Axis::ALL {
-                assert_eq!(e * a, (e * a.grips()[0]).axis())
-            }
-        }
     }
 }
