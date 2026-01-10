@@ -68,9 +68,7 @@ impl Heuristic {
                             // assume other moves are used to make more blocks
                             max_blocks_solvable_using_body = remaining_moves - 1;
                         }
-                        Some(3) => {
-                            max_blocks_solvable_using_body = remaining_moves - 2;
-                        }
+                        Some(3) => (),
                         _ => unreachable!(), // never takes more than 3 moves
                     }
                 }
