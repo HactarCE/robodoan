@@ -21,6 +21,7 @@ macro_rules! overprint {
         ::std::io::Write::flush(&mut ::std::io::stdout()).unwrap();
     };
 }
+
 macro_rules! overprintln {
     ($($args:tt)*) => {
         print!("\r");

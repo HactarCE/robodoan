@@ -1,9 +1,9 @@
-mod block;
-mod layer_mask;
-mod piece;
-mod state;
+//! Blockbuilding puzzle simulator.
 
-pub use block::*;
-pub use layer_mask::*;
-pub use piece::*;
-pub use state::*;
+mod block;
+mod block_list;
+mod block_list_meta;
+
+pub use block::Block;
+pub use block_list::BlockList;
+use block_list_meta::BlockListMeta;

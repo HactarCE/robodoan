@@ -1,17 +1,16 @@
-use crate::new::BlockList;
-
-use super::*;
+use crate::sim::blockbuilding::*;
 
 /// Heuristic for pruning search branches.
 #[derive(Debug, Default, Copy, Clone, PartialEq)]
 pub enum Heuristic {
+    /// Use a trivially correct heuristic that only does cheap computations.
     TrivialCorrect,
     /// Prune aggressively; prune branches that are unlikely to result in a
     /// solution.
+    #[default]
     Fast,
     /// Prune conservatively; never prune a branch that could possibly result in
     /// a solution.
-    #[default]
     Correct,
 }
 
@@ -20,7 +19,6 @@ impl Heuristic {
     /// `expected_blocks` blocks within `remaining_moves`.
     pub fn might_be_solvable(
         self,
-        puzzle: &Puzzle,
         state: &BlockList,
         expected_blocks: usize,
         remaining_moves: usize,
@@ -28,8 +26,7 @@ impl Heuristic {
         let remaining_pairings_needed = state.len() as usize - expected_blocks;
 
         remaining_pairings_needed <= self.combinatoric_limit(expected_blocks, remaining_moves)
-            && remaining_pairings_needed
-                <= self.grip_theoretic_limit(puzzle, state, remaining_moves)
+            && remaining_pairings_needed <= self.grip_theoretic_limit(state, remaining_moves)
     }
 
     /// Returns the maximum number of block pairings possible using a naive
@@ -43,12 +40,7 @@ impl Heuristic {
     }
     /// Returns the maximum number of block pairings using a grip-theoretic
     /// approach.
-    fn grip_theoretic_limit(
-        self,
-        puzzle: &Puzzle,
-        state: &BlockList,
-        remaining_moves: usize,
-    ) -> usize {
+    fn grip_theoretic_limit(self, state: &BlockList, remaining_moves: usize) -> usize {
         if self == Heuristic::TrivialCorrect {
             return usize::MAX;
         }
@@ -57,13 +49,13 @@ impl Heuristic {
 
         for body_rank in 0..4 {
             let head_rank = body_rank + 1;
-            for body in state.blocks_with_rank(body_rank) {
+            for body in state.blocks_with_inner_rank(body_rank) {
                 // assume `body` can be made into a larger block within 3 moves.
                 // assume other moves are used to make more blocks.
                 let mut max_blocks_solvable_using_body = remaining_moves.saturating_sub(2);
 
-                'each_head: for head in state.blocks_with_rank(head_rank) {
-                    match crate::new::Block::moves_needed_to_pair(body, head) {
+                'each_head: for head in state.blocks_with_inner_rank(head_rank) {
+                    match Block::moves_needed_to_pair(body, head) {
                         None => continue,
                         Some(1) => {
                             // `body` and `head` can be paired in 1 move.
@@ -79,7 +71,7 @@ impl Heuristic {
                         Some(3) => {
                             max_blocks_solvable_using_body = remaining_moves - 2;
                         }
-                        _ => (),
+                        _ => unreachable!(), // never takes more than 3 moves
                     }
                 }
 

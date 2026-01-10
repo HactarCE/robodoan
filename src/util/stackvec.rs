@@ -1,10 +1,14 @@
+//! Short vector stored on the stack.
+
 use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Deref, DerefMut, Index, IndexMut, RangeTo};
 
-#[repr(align(8))]
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-#[must_use = "this method returns a new value rather than modifying its input"]
+/// Vector with a limited capacity, stored on the stack.
+///
+/// The length is stored as a `u8` to save on space.
+#[derive(Copy, Clone)]
+#[must_use = "StackVec methods return a new value rather than modifying their input"]
 pub struct StackVec<T, const CAP: usize> {
     len: u8,
     elems: [T; CAP],
@@ -12,14 +16,23 @@ pub struct StackVec<T, const CAP: usize> {
 
 impl<T: PartialOrd, const CAP: usize> PartialOrd for StackVec<T, CAP> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        PartialOrd::partial_cmp(&self[..], &other[..])
+        PartialOrd::partial_cmp(self.as_slice(), other.as_slice())
     }
 }
+
 impl<T: Ord, const CAP: usize> Ord for StackVec<T, CAP> {
     fn cmp(&self, other: &Self) -> Ordering {
-        Ord::cmp(&self[..], &other[..])
+        Ord::cmp(self.as_slice(), other.as_slice())
     }
 }
+
+impl<T: PartialEq, const CAP: usize> PartialEq for StackVec<T, CAP> {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl<T: Eq, const CAP: usize> Eq for StackVec<T, CAP> {}
 
 impl<T: fmt::Debug, const CAP: usize> fmt::Debug for StackVec<T, CAP> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -38,12 +51,12 @@ impl<T: Default + Copy, const CAP: usize> Default for StackVec<T, CAP> {
 }
 
 impl<T: Default + Copy, const CAP: usize> StackVec<T, CAP> {
+    /// Constructs a new empty vector.
     pub fn new() -> Self {
         Self::default()
     }
 
-    #[must_use = "this method returns a new value rather than modifying its input"]
-    #[inline]
+    /// Constructs a vector from values in a slice.
     pub fn from_slice(array: &[T]) -> Option<Self> {
         let mut ret = Self::default();
         if array.len() > CAP {
@@ -54,34 +67,20 @@ impl<T: Default + Copy, const CAP: usize> StackVec<T, CAP> {
         Some(ret)
     }
 
-    #[must_use = "this method returns a new value rather than modifying its input"]
+    /// Pushes an element onto the vector and returns it, or returns `None` in
+    /// case of overflow.
     pub fn push(mut self, elem: T) -> Option<Self> {
         *self.elems.get_mut(self.len as usize)? = elem;
         self.len += 1;
         Some(self)
     }
 
-    #[must_use = "this method returns a new value rather than modifying its input"]
+    /// Applies a function to every element in the vector.
     pub fn map<U: Default + Copy>(self, f: impl FnMut(T) -> U) -> StackVec<U, CAP> {
         StackVec::from_iter(self.into_iter().map(f)).unwrap()
     }
-    #[must_use = "this method returns a new value rather than modifying its input"]
-    pub fn retain_unsorted(mut self, mut f: impl FnMut(T) -> bool) -> StackVec<T, CAP> {
-        if self.len == 0 {
-            return self;
-        }
-        let mut i = 0;
-        while i < self.len() {
-            if f(self[i]) {
-                i += 1;
-            } else {
-                self = self.swap_remove(i);
-            }
-        }
-        self
-    }
 
-    #[must_use = "this method returns a new value rather than modifying its input"]
+    /// Extends the vector with elements from an iterator.
     pub fn extend(mut self, iter: impl IntoIterator<Item = T>) -> Option<Self> {
         let iter = iter.into_iter();
 
@@ -96,20 +95,26 @@ impl<T: Default + Copy, const CAP: usize> StackVec<T, CAP> {
         Some(self)
     }
 
+    /// Constructs a vector from an iterator, or returns `None` in case of
+    /// overflow.
     #[allow(clippy::should_implement_trait)] // can't impl FromIterator<T> for Option<Self>
     pub fn from_iter(iter: impl IntoIterator<Item = T>) -> Option<Self> {
         Self::new().extend(iter)
     }
-
-    #[must_use = "this method returns a new value rather than modifying its input"]
-    pub fn swap_remove(mut self, index: usize) -> Self {
-        self[index] = self[self.len() - 1];
-        self.len -= 1;
-        self
-    }
 }
+
 impl<T, const CAP: usize> StackVec<T, CAP> {
-    #[must_use = "this method returns a new value rather than modifying its input"]
+    /// Returns a slice containing the entire vector.
+    pub fn as_slice(&self) -> &[T] {
+        self // via deref
+    }
+
+    /// Returns a mutable slice containing the entire vector.
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        self // via deref_mut
+    }
+
+    /// Sorts the vector without preserving the initial ordering.
     pub fn sorted_unstable(mut self) -> Self
     where
         T: Ord,
@@ -117,12 +122,15 @@ impl<T, const CAP: usize> StackVec<T, CAP> {
         self.sort_unstable();
         self
     }
-    #[must_use = "this method returns a new value rather than modifying its input"]
+
+    /// Sorts the vector by a key without preserving the initial ordering.
     pub fn sorted_unstable_by_key<K: Ord>(mut self, f: impl FnMut(&T) -> K) -> Self {
         self.sort_unstable_by_key(f);
         self
     }
-    #[must_use = "this method returns a new value rather than modifying its input"]
+
+    /// Sorts the vector with a comparison function without preserving the
+    /// initial ordering.
     pub fn sorted_unstable_by(mut self, compare: impl FnMut(&T, &T) -> Ordering) -> Self {
         self.sort_unstable_by(compare);
         self
@@ -219,18 +227,5 @@ mod tests {
         a = a.push((3, 14)).unwrap();
         a = a.push((1, 3)).unwrap();
         a.sort_unstable();
-    }
-
-    #[test]
-    fn test_stackvec_retain() {
-        let mut a = StackVec::<u8, 16>::from_iter([9, 7, 10, 2, 8, 3, 1, 4, 6, 5]).unwrap();
-        a = a.retain_unsorted(|x| x > 5);
-        a.sort();
-        assert_eq!(&*a, &[6, 7, 8, 9, 10]);
-
-        let b = StackVec::<u8, 2>::from_iter([0, 10])
-            .unwrap()
-            .retain_unsorted(|x| x != 0);
-        assert_eq!(&*b, &[10]);
     }
 }

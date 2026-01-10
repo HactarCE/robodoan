@@ -5,12 +5,7 @@ use rand::SeedableRng;
 use robodoan::*;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let profile = Profile::Fast;
-
-    // rayon::ThreadPoolBuilder::new()
-    //     .num_threads(1)
-    //     .build_global()
-    //     .unwrap();
+    let params = BlockBuildingSearchParams::default();
 
     if let Some(filename) = std::env::args().nth(1) {
         let log_file_text = std::fs::read_to_string(&filename)?;
@@ -18,7 +13,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("Loaded log file from {filename}");
         println!();
         // let (solve_twists, _elapsed_time) = search_4d(scramble.scramble());
-        let solve_twists = robodoan::Solver::new(profile, scramble.scramble()).solve();
+        let solve_twists = robodoan::Solver::new(params, scramble.scramble()).solve();
         println!();
         std::fs::write("out.log", scramble.to_string(false, solve_twists))?;
         return Ok(());
@@ -27,11 +22,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut results = vec![];
     let mut rng = rand::rngs::SmallRng::seed_from_u64(123);
     for i in 0..10 {
-        let scramble = RUBIKS_4D.random_moves(&mut rng, 100);
+        let scramble = sim::random_twists(&mut rng, 100);
         println!("\n\n---- STARTING SEARCH #{} ----\n", i + 1);
         println!("Scramble: {}", scramble.iter().join(" "));
         let t = std::time::Instant::now();
-        let solution = robodoan::Solver::new(profile, scramble).solve();
+        let solution = robodoan::Solver::new(params, scramble).solve();
         results.push((solution.len(), t.elapsed()));
     }
     println!("\n\n---- RESULTS ----\n");
@@ -60,4 +55,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     // robodoan::Solver::new(scramble).solve();
 
     Ok(())
+}
+
+/// Sets the thread count for the global thread pool.
+pub fn set_thread_count(thread_count: usize) {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .build_global()
+        .unwrap();
 }

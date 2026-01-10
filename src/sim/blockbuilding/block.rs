@@ -1,386 +1,581 @@
 use std::fmt;
+use std::fmt::Write;
 use std::ops::Mul;
 
-use super::layer_mask::{GripStatus, PackedLayers};
-use super::piece::Piece;
-use crate::StackVec;
 use crate::sim::common::*;
 
-/// Block of pieces with compatible attitudes, displayed as
-/// `ACTIVE_GRIPS$blocked_grips!INACTIVE_GRIPS`.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Block {
-    layers: PackedLayers,
-    attitude: ElemId,
-}
-// same as `#[derive(Default)]` but easier for the compiler to inline
-impl Default for Block {
-    #[inline]
-    fn default() -> Self {
-        Self {
-            layers: PackedLayers::EMPTY,
-            attitude: IDENT,
+/// Bit offset for the 12-bit layer mask.
+const OFS_LAYERS: u32 = 0;
+/// Bit offset for the 4-bit inner rank.
+const OFS_RANK: u32 = 12;
+/// Bit offset for the 8-bit radix sort key.
+const OFS_SORT: u32 = 16;
+/// Bit offset for the 8-bit attitude.
+const OFS_ATT: u32 = 24;
+
+/// Bitmask for the 12-bit layer mask.
+const _MASK_LAYERS: u32 = 0xFFF << OFS_LAYERS;
+/// Bitmask for the 4-bit inner rank.
+const _MASK_RANK: u32 = 0xF << OFS_RANK;
+/// Bitmask for the 8-bit radix sort key.
+const _MASK_SORT: u32 = 0xFF << OFS_SORT;
+/// Bitmask for the 8-bit attitude.
+const _MASK_ATT: u32 = 0xFF << OFS_ATT;
+
+/// Block of pieces on a 3x3x3x3 puzzle.
+///
+/// Bits are assigned as follows:
+///
+/// - 0..12 = layers when solved
+///     - 0..4 = positive layers
+///     - 4..8 = middle layers
+///     - 8..12 = negative layers
+/// - 12..16 = inner rank
+/// - 16..24 = radix sort key
+/// - 24..32 = attitude
+///
+/// An empty block is valid and always contains all zeros.
+///
+/// Only the attitude changes when moving a block around the puzzle.
+#[derive(Default, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct Block(u32);
+
+impl fmt::Debug for Block {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut layers_str = ":".to_string();
+        for ax in Axis::ALL {
+            let bits = self.layer_bits_for_grip(ax.grips()[0]);
+            for i in [8, 4, 0] {
+                let bit = bits & (1 << i) != 0;
+                write!(&mut layers_str, "{}", if bit { ax.char() } else { '_' })?;
+            }
+            write!(&mut layers_str, ":")?;
         }
+
+        f.debug_struct("Block")
+            .field("layers", &layers_str)
+            .field("inner_rank", &self.inner_rank())
+            .field("outer_rank", &self.outer_rank())
+            .field(
+                "radix_sort_key",
+                &if self.is_empty() {
+                    0
+                } else {
+                    self.radix_sort_key()
+                },
+            )
+            .field("attitude", &self.attitude())
+            .field("bits", &format!("0x{:08x}", self.0))
+            .finish()
     }
 }
-impl From<Piece> for Block {
-    fn from(value: Piece) -> Self {
-        Self::new(value.grips.iter(), (!value.grips).iter(), value.attitude).unwrap()
-    }
-}
+
 impl Block {
-    pub fn new_solved(
-        active_grips: impl IntoIterator<Item = GripId>,
-        inactive_grips: impl IntoIterator<Item = GripId>,
-    ) -> Option<Self> {
-        Self::new(active_grips, inactive_grips, IDENT)
-    }
-    pub fn new(
-        active_grips: impl IntoIterator<Item = GripId>,
-        inactive_grips: impl IntoIterator<Item = GripId>,
-        attitude: ElemId,
-    ) -> Option<Self> {
-        let mut layers = PackedLayers::ALL;
-        for g in active_grips {
-            layers = layers.restrict_to_active_grip(g)?;
-        }
-        for g in inactive_grips {
-            layers = layers.restrict_to_inactive_grip(g)?;
-        }
-        if layers.is_empty_on_any_axis() {
-            return None; // block is empty!
-        }
-        Some(Self { layers, attitude })
+    /// Empty block
+    pub const EMPTY: Self = Self(0);
+    /// Block containing only the core
+    pub const CORE: Self = Self::from_layer_bits(0x0F0);
+
+    /// Returns whether the block is empty.
+    pub fn is_empty(self) -> bool {
+        self == Self::EMPTY
     }
 
-    pub fn layers(self) -> PackedLayers {
-        self.layers
-    }
-    pub fn attitude(self) -> ElemId {
-        self.attitude
-    }
-
-    pub fn at_solved(self) -> Self {
-        Block {
-            layers: self.attitude.inv() * self.layers,
-            attitude: IDENT,
-        }
-    }
-
-    pub fn is_subset_of(self, other: Self) -> bool {
-        self.attitude == other.attitude && self.layers.is_subset_of(other.layers)
-    }
-
-    pub fn grip_status(self, grip: GripId) -> GripStatus {
-        self.layers.grip_status(grip)
-    }
-
-    pub fn active_grips(self) -> GripSet {
-        self.grips_with_status(GripStatus::Active)
-    }
-    pub fn inactive_grips(self) -> GripSet {
-        self.grips_with_status(GripStatus::Inactive)
-    }
-    pub fn blocked_grips(self) -> GripSet {
-        self.grips_with_status(GripStatus::Blocked)
-    }
-    pub fn is_fully_blocked_on_axis(self, axis: usize) -> bool {
-        self.layers.is_fully_blocked_on_axis(axis)
-    }
-    fn grips_with_status(self, status: GripStatus) -> GripSet {
-        HYPERCUBE_GRIPS
-            .into_iter()
-            .filter(|&g| self.layers.grip_status(g) == status)
-            .collect()
-    }
-
-    #[must_use]
-    pub fn expand_to_active_grip(self, grip: GripId) -> Self {
-        Self {
-            layers: self.layers.expand_to_active_grip(grip),
-            attitude: self.attitude,
-        }
-    }
-    #[must_use]
-    pub fn restrict_to_active_grip(self, grip: GripId) -> Option<Self> {
-        Some(Self {
-            layers: self.layers.restrict_to_active_grip(grip)?,
-            attitude: self.attitude,
-        })
-    }
-    #[must_use]
-    pub fn restrict_to_inactive_grip(self, grip: GripId) -> Option<Self> {
-        Some(Self {
-            layers: self.layers.restrict_to_inactive_grip(grip)?,
-            attitude: self.attitude,
-        })
-    }
-
-    pub fn contains_piece(self, piece: Piece) -> bool {
-        HYPERCUBE_GRIPS.into_iter().all(|g| {
-            let forbidden_status = if piece.grips.contains(g) {
-                GripStatus::Inactive
-            } else {
-                GripStatus::Active
-            };
-            self.layers.grip_status(g) != forbidden_status
-        })
-    }
-
-    /// Returns a list of indistinguishable attitudes for the block in its
-    /// current position, or `None` if the attitude is completely
-    /// distinguishable.
+    /// Constructs a block with solved attitude from layer bits.
     ///
-    /// - In 3D, only centers have indistinguishable attitudes.
-    /// - In 4D, only centers and ridges has indistinguishable attitudes.
+    /// # Panics
     ///
-    /// The core's attitude is always completely distinguishable.
-    pub fn indistinguishable_attitudes(&self, ndim: usize) -> impl Iterator<Item = ElemId> {
-        self.layers
-            .indistinguishable_subgroup()
-            .filter(|_| !(ndim == 3 && self.layers == PackedLayers::CORE_3D)) // 3D core is distinguishable
-            .unwrap_or(&[IDENT])
-            .iter()
-            .map(|&rot| rot * self.attitude)
-    }
-    /// Returns the set of grips constructed by taking all indistinguishable
-    /// attitudes for the block in its current position and mutliplying each one
-    /// by `g`. Duplicates are not included.
-    pub fn mul_indistinguishable_attides_by_grip(
-        self,
-        ndim: usize,
-        g: GripId,
-    ) -> StackVec<GripId, 6> {
-        let g = self.attitude * g;
-        let only_g = || StackVec::from_iter([g]).unwrap();
+    /// Panics if `layers >= 1 << 12`.
+    pub const fn from_layer_bits(layer_bits: u16) -> Self {
+        assert!(layer_bits < 1 << 12, "layer mask out of range");
 
-        // Core is always distinguishable
-        if (ndim == 3 && self.layers == PackedLayers::CORE_3D)
-            || self.layers == PackedLayers::CORE_4D
-        {
-            return only_g();
-        }
-
-        if self.layers.is_axis_blocked(g.axis_deprecated()) {
-            return only_g();
-        }
-
-        let blocked_axes_mask = self.layers.blocked_axes_mask();
-        if blocked_axes_mask.count_ones() > 2 {
-            return only_g();
-        }
-
-        StackVec::from_iter(
-            (0..4)
-                .filter(|i| (blocked_axes_mask >> i) & 1 != 0)
-                .flat_map(GripId::pair_on_axis_deprecated),
-        )
-        .unwrap()
-    }
-
-    //// Returns `[inside, outside]`
-    pub fn split(self, grip: GripId) -> [Option<Self>; 2] {
-        self.layers.split(grip).map(|layers| {
-            Some(Block {
-                layers: layers?,
-                attitude: self.attitude,
-            })
-        })
-    }
-
-    pub fn try_merge(self, other: Self, ndim: usize) -> Option<Self> {
-        let layers = self.layers.try_merge_with(other.layers)?.0;
-
-        let [head, body] = if self.layers.active_grip_count() > other.layers.active_grip_count() {
-            [self, other]
+        if layer_bits | (layer_bits >> 4) | (layer_bits >> 8) == 0 {
+            Self::EMPTY
         } else {
-            [other, self]
+            Self::from_layer_bits_nonempty(layer_bits)
+        }
+    }
+
+    /// Constructs a block with solved attitude from layer bits, assuming they
+    /// are valid and nonempty.
+    const fn from_layer_bits_nonempty(layer_bits: u16) -> Self {
+        let inner_rank = inner_rank_from_layers(layer_bits);
+        let radix_sort_key = radix_sort_key_from_layers(layer_bits);
+        Self(
+            (layer_bits as u32) << OFS_LAYERS
+                | (inner_rank as u32) << OFS_RANK
+                | (radix_sort_key as u32) << OFS_SORT,
+        )
+    }
+
+    /// Returns layer bits for an axis.
+    ///
+    /// - bit 0 = positive layer
+    /// - bit 4 = middle layer
+    /// - bit 8 = negative layer
+    fn layer_bits_for_axis(self, ax: Axis) -> u32 {
+        self.0 >> (OFS_LAYERS + ax.id() as u32) & 0x111
+    }
+
+    /// Returns layer bits for an grip.
+    ///
+    /// - bit 0 = `g`
+    /// - bit 4 = middle layer
+    /// - bit 8 = `g.opposite()`
+    fn layer_bits_for_grip(self, g: Grip) -> u32 {
+        let axis_bits = self.layer_bits_for_axis(g.axis());
+        if g.is_pos() {
+            axis_bits
+        } else {
+            rev9(axis_bits)
+        }
+    }
+
+    fn layer_bits(self) -> u16 {
+        ((self.0 >> OFS_LAYERS) & 0xFFF) as u16
+    }
+
+    /// Returns the inner rank of the block, which is the number of stickers on
+    /// the innermost piece. This is in the range `0..=4`.
+    pub fn inner_rank(self) -> u8 {
+        ((self.0 >> OFS_RANK) & 0xF) as u8
+    }
+
+    /// Returns the outer rank of the block, which is the number of stickers on
+    /// the outermost piece. This is in the range `0..=4`.
+    pub fn outer_rank(self) -> u8 {
+        // TODO: try storing this instead of inner rank
+        outer_rank_from_layers(self.layer_bits())
+    }
+
+    /// Returns the sort key for the block.
+    ///
+    /// This is guaranteed to be unique among non-overlapping blocks.
+    #[track_caller]
+    pub fn radix_sort_key(self) -> u8 {
+        assert!(!self.is_empty(), "block is empty");
+        ((self.0 >> OFS_SORT) & 0xFF) as u8
+    }
+
+    /// Returns the attitude of the block.
+    pub fn attitude(self) -> Elem {
+        // TODO: consider storing the inverse attitude instead
+        Elem::new(((self.0 >> OFS_ATT) & 0xFF) as u8)
+    }
+
+    /// Returns the inverse of the attitude of the block.
+    fn inv_attitude(self) -> Elem {
+        self.attitude().inv()
+    }
+
+    /// Returns the same block with a different attitude.
+    #[must_use]
+    fn with_attitude(self, attitude: Elem) -> Self {
+        Self(self.0 & !_MASK_ATT | (attitude.id() as u32) << OFS_ATT)
+    }
+
+    /// Returns the same block with identity attitude.
+    #[must_use]
+    pub fn at_solved(self) -> Self {
+        self.with_attitude(Elem::IDENT)
+    }
+
+    /// Splits the block along the grip and returns two new blocks `[active,
+    /// inactive]`.
+    ///
+    /// - `active` is the block that would be affected by the twist.
+    /// - `inactive` is the block that would **not** be affected by the twist.
+    ///
+    /// Either block may be [`Block::EMPTY`].
+    #[must_use]
+    pub fn split(self, grip: Grip) -> [Self; 2] {
+        let g = self.inv_attitude() * grip;
+        let layer_bits = self.layer_bits();
+        let axis_mask = layer_bits_for_axis(g.axis());
+        let grip_mask = layer_bit_for_grip(g);
+        debug_assert_eq!(grip_mask & !axis_mask, 0);
+
+        let active = if layer_bits & grip_mask == 0 {
+            Self::EMPTY
+        } else {
+            Self::from_layer_bits_nonempty(layer_bits & (grip_mask | !axis_mask))
+                .with_attitude(self.attitude())
         };
 
-        if !body
-            .indistinguishable_attitudes(ndim)
-            .any(|a| a == head.attitude)
-        {
+        let inactive = if layer_bits & axis_mask & !grip_mask == 0 {
+            Self::EMPTY
+        } else {
+            Self::from_layer_bits_nonempty(layer_bits & !grip_mask).with_attitude(self.attitude())
+        };
+
+        [active, inactive]
+    }
+
+    /// Returns whether `grip` is inactive on the block at its current location.
+    pub fn is_grip_inactive(self, grip: Grip) -> bool {
+        let g = self.inv_attitude() * grip;
+        self.layer_bits() & layer_bit_for_grip(g) == 0
+    }
+
+    /// Returns a bitmask of the active or blocked axes, which are the axes
+    /// where the block has at least one sticker when solved.
+    pub fn active_or_blocked_axes(self) -> AxisSet {
+        let layer_bits = self.layer_bits();
+        AxisSet::from_bits(((layer_bits | (layer_bits >> 8)) & 0xF) as u8)
+    }
+
+    /// Returns the grips that are active and not blocked on the block when
+    /// solved.
+    pub fn active_grips(self) -> GripSet {
+        let layer_bits = self.layer_bits();
+        let x = layer_bits & 0x111;
+        let y = layer_bits & 0x222;
+        let z = layer_bits & 0x444;
+        let w = layer_bits & 0x888;
+        GripSet::from_bits(
+            (x == 0x001) as u8
+                | ((x == 0x100) as u8) << 1
+                | ((y == 0x002) as u8) << 2
+                | ((y == 0x200) as u8) << 3
+                | ((z == 0x004) as u8) << 4
+                | ((z == 0x400) as u8) << 5
+                | ((w == 0x008) as u8) << 6
+                | ((w == 0x800) as u8) << 7,
+        )
+    }
+
+    /// Returns the grips that are active or blocked on the block when solved.
+    pub fn active_or_blocked_grips(self) -> GripSet {
+        let layer_bits = self.layer_bits();
+        GripSet::from_bits(
+            (layer_bits & 0x001 != 0) as u8
+                | ((layer_bits & 0x100 != 0) as u8) << 1
+                | ((layer_bits & 0x002 != 0) as u8) << 2
+                | ((layer_bits & 0x200 != 0) as u8) << 3
+                | ((layer_bits & 0x004 != 0) as u8) << 4
+                | ((layer_bits & 0x400 != 0) as u8) << 5
+                | ((layer_bits & 0x008 != 0) as u8) << 6
+                | ((layer_bits & 0x800 != 0) as u8) << 7,
+        )
+    }
+
+    /// Returns the grips active when solved.
+    pub fn current_active_grips(self) -> GripSet {
+        self.attitude() * self.active_grips()
+    }
+
+    /// Merges two blocks. Returns [`Block::EMPTY`] if the blocks cannot be
+    /// merged.
+    ///
+    /// Panics in debug mode if `body == head`, if either input is empty, or if
+    /// `body.rank() + 1 != head.rank()`.
+    #[track_caller]
+    pub fn merge(body: Self, head: Self) -> Block {
+        // TODO: try with & without branching
+
+        // Check preconditions
+        debug_assert_ne!(body, head, "body and head are equal");
+        debug_assert!(!body.is_empty(), "body is empty");
+        debug_assert!(!head.is_empty(), "head is empty");
+        debug_assert_eq!(
+            body.inner_rank() + 1,
+            head.inner_rank(),
+            "body & head ranks are incompatible",
+        );
+
+        // Check layers
+        let diff = body.layer_bits() ^ head.layer_bits();
+        let merge_axis = diff.trailing_zeros() as u8 % 4;
+        if diff & !(0x111 << merge_axis) != 0 {
+            return Block::EMPTY; // differ along multiple axes
+        }
+        if diff & (0x010 << merge_axis) == 0 {
+            return Block::EMPTY; // disconnected blocks not allowed
+        }
+
+        // Check attitudes
+        let attitude_matches = body.attitude() == head.attitude() // always works
+            || match body.outer_rank() {
+                // core + center always matches
+                0 => true,
+
+                // center + ridge matches if the ridge attitude preserves the grip of the center
+                1 => {
+                    // assume that centers do not move (core is always stationary)
+                    let g = body.active_or_blocked_axes().unwrap_one().grips()[0];
+                    head.attitude() * g == g
+                }
+
+                // ridge + edge has 4 indistinguishable ridge attitudes
+                2 => {
+                    let delta = body.inv_attitude() * head.attitude(); // either can be inverted
+                    ridge_indistinguishable_subgroup(body.active_or_blocked_axes()).contains(&delta)
+                }
+
+                // edge + corner requires exact attitude match
+                3 | 4 => body.attitude() == head.attitude(),
+
+
+                _ => unreachable!(),
+            };
+        if !attitude_matches {
+            return Self::EMPTY;
+        }
+
+        Self::from_layer_bits(body.layer_bits() | head.layer_bits()).with_attitude(head.attitude())
+    }
+
+    /// Returns the number of moves needed to pair `body` and `head`, or `None`
+    /// if they cannot be paried.
+    ///
+    /// Panics in debug mode if the blocks can already be paired.
+    pub fn moves_needed_to_pair(body: Self, head: Self) -> Option<usize> {
+        if Self::merge(body.at_solved(), head.at_solved()).is_empty() {
             return None;
         }
 
-        Some(Self {
-            layers,
-            attitude: head.attitude,
-        })
+        let diff = body.layer_bits() ^ head.layer_bits();
+        let merge_axis = Axis::new(diff.trailing_zeros() as u8 % 4);
+
+        debug_assert!(
+            Self::merge(body, head).is_empty(),
+            "blocks should already be merged",
+        );
+
+        match body.outer_rank() {
+            // core + center always pair instantly
+            0 => Some(0),
+
+            // center + ridge
+            1 => {
+                let body_axis = body.active_or_blocked_axes().unwrap_one();
+                if head.attitude() * merge_axis == body_axis {
+                    Some(2) // "bad" ridge
+                } else {
+                    Some(1) // "good" ridge
+                }
+            }
+
+            // ridge + edge
+            2 => {
+                debug_assert_eq!(body.active_or_blocked_axes().len(), 2);
+                if body
+                    .active_or_blocked_axes()
+                    .contains(head.attitude() * merge_axis)
+                {
+                    Some(2)
+                } else {
+                    Some(1)
+                }
+            }
+
+            // edge + corner or corner + corner requires exact attitude match
+            3 | 4 => {
+                let merge_grip =
+                    (head.active_grips() & !body.active_or_blocked_grips()).unwrap_one();
+                if body.attitude() * merge_grip == head.attitude() * merge_grip {
+                    Some(1)
+                } else {
+                    // Reframe everything as though the body is already solved.
+                    let delta = head.attitude() * body.inv_attitude();
+                    // Which grips affect the head but not the body?
+                    let free_grips = head.with_attitude(delta).current_active_grips()
+                        & !body.active_or_blocked_grips();
+                    // If we are able to solve this piece in 2 moves, then the
+                    // first move has to take the head's merge grip to the
+                    // body's merge grip without affecting the body. That means
+                    // the twist can't be on an active grip of the body, and it
+                    // can't be on the current merge axis of the body or the
+                    // head.
+                    if (free_grips
+                        & !GripSet::from(merge_axis)
+                        & !GripSet::from(delta * merge_grip))
+                    .is_empty()
+                    {
+                        Some(3) // no such grips! requires 3 moves
+                    } else {
+                        Some(2)
+                    }
+                }
+            }
+
+            _ => unreachable!(),
+        }
     }
-}
-impl fmt::Debug for Block {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self { layers, attitude } = self;
-        write!(f, "{layers:?}@[{attitude:?}]")
+
+    /// Returns the number of pieces in the block.
+    pub fn piece_count(self) -> u32 {
+        Axis::ALL
+            .map(|ax| self.layer_bits_for_axis(ax).count_ones())
+            .into_iter()
+            .product()
     }
-}
-impl fmt::Display for Block {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self { layers, attitude } = self;
-        write!(f, "{layers}@[{attitude}]")
+
+    /// Returns a block that is like this one, but is expanded to include one or
+    /// more new grips.
+    pub fn expand(self, new_grips: GripSet) -> Self {
+        let mut layer_bits = self.layer_bits();
+        for g in new_grips.iter() {
+            layer_bits |= if layer_bits & layer_bit_for_grip(g.opposite()) != 0 {
+                layer_bits_for_axis(g.axis()) // add middle layer as well
+            } else {
+                layer_bit_for_grip(g)
+            }
+        }
+        Self::from_layer_bits(layer_bits)
     }
 }
 
-impl Mul<Block> for Twist {
-    type Output = [Option<Block>; 2];
+impl From<Piece> for Block {
+    fn from(piece: Piece) -> Self {
+        let mut ret = 0;
+        for g in piece.at_solved().grips.iter() {
+            ret |= layer_bit_for_grip(g);
+        }
+        ret |= 0x0F0 & !(ret << 4) & !(ret >> 4);
+        Self::from_layer_bits(ret)
+    }
+}
+
+impl Mul<Block> for Elem {
+    type Output = Block;
 
     fn mul(self, rhs: Block) -> Self::Output {
-        self.assert_is_valid();
-
-        let [inside, outside] = rhs.split(self.grip);
-        [
-            inside.map(|b| Block {
-                layers: self.transform * b.layers,
-                attitude: self.transform * b.attitude,
-            }),
-            outside,
-        ]
+        rhs.with_attitude(self * rhs.attitude())
     }
+}
+
+const fn layer_bits_for_axis(axis: Axis) -> u16 {
+    0x111 << axis.id()
+}
+
+const fn layer_bit_for_grip(grip: Grip) -> u16 {
+    1 << (grip.axis().id() + 8 * grip.sign_bit())
+}
+
+/// Returns the "outer rank" of a block, which is the number of stickers on its
+/// outermost piece.
+const fn outer_rank_from_layers(layers: u16) -> u8 {
+    ((layers | (layers >> 8)) & 0xF).count_ones() as u8
+}
+
+/// Returns the "outer rank" of a block, which is the number of stickers on its
+/// innermost piece.
+const fn inner_rank_from_layers(layers: u16) -> u8 {
+    4 - (layers & 0x0F0).count_ones() as u8
+}
+
+/// Returns the key for sorting a block using a radix sort. The output is in the
+/// range `0..81`.
+///
+/// This key is not unique to the block, but it will never overlap with disjoint
+/// blocks.
+const fn radix_sort_key_from_layers(layers: u16) -> u8 {
+    const fn min(a: u16, b: u16) -> u16 {
+        if a < b { a } else { b }
+    }
+
+    // For each axis, apply the following mapping:
+    //
+    // 001 -> 1
+    // 010 -> 2
+    // 100 -> 0
+    // 011 -> 2
+    // 110 -> 2
+    // 111 -> 2
+    let x = min(2, layers & 0x11) as u8;
+    let y = min(2, (layers >> 1) & 0x11) as u8;
+    let z = min(2, (layers >> 2) & 0x11) as u8;
+    let w = min(2, (layers >> 3) & 0x11) as u8;
+    // Then combine them into a base-3 number.
+    x + y * 3 + z * 9 + w * 27
+}
+
+fn ridge_indistinguishable_subgroup(active_axes: AxisSet) -> [Elem; 4] {
+    match active_axes.bits() {
+        0b0011 => *elements::XY_STABILIZER,
+        0b0110 => *elements::YZ_STABILIZER,
+        0b1100 => *elements::ZW_STABILIZER,
+        0b0101 => *elements::XZ_STABILIZER,
+        0b1010 => *elements::YW_STABILIZER,
+        0b1001 => *elements::XW_STABILIZER,
+        _ => panic!("not a ridge"),
+    }
+}
+
+/// Reverses the lowest 9 bits of a `u32` and zeros the rest.
+#[must_use]
+const fn rev9(x: u32) -> u32 {
+    x.reverse_bits() >> (u32::BITS - 9)
 }
 
 #[cfg(test)]
-mod test {
-    use itertools::Itertools;
-    use proptest::prelude::*;
-
+mod tests {
     use super::*;
 
-    impl Arbitrary for Block {
-        type Parameters = ();
-
-        fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
-            (std::array::from_fn::<_, 8, _>(|_| 0..3), any::<ElemId>())
-                .prop_filter_map("invalid block", |(grip_statuses, attitude)| {
-                    let mut active_grips = GripSet::NONE;
-                    let mut inactive_grips = GripSet::NONE;
-                    for (i, status) in grip_statuses.into_iter().enumerate() {
-                        let g = GripId::new(i as u8);
-                        if status & 1 != 0 {
-                            active_grips += g;
-                        }
-                        if status & 2 != 0 {
-                            inactive_grips += g;
-                        }
-                    }
-                    Block::new(active_grips.iter(), inactive_grips.iter(), attitude)
-                })
-                .boxed()
-        }
-
-        type Strategy = BoxedStrategy<Self>;
+    #[test]
+    fn test_rev9() {
+        assert_eq!(rev9(0x001), 0x100);
+        assert_eq!(rev9(0x011), 0x110);
+        assert_eq!(rev9(0x111), 0x111);
+        assert_eq!(rev9(0x110), 0x011);
+        assert_eq!(rev9(0x100), 0x001);
+        assert_eq!(rev9(0x010), 0x010);
     }
 
-    proptest! {
-        #[test]
-        fn proptest_merge_blocks(b1: Block, b2: Block) {
-            test_merge_blocks(b1, b2);
-        }
-    }
-
-    fn test_merge_blocks(mut b1: Block, b2: Block) {
-        let ndim = 4;
-
-        assert!(!b1.layers.is_empty_on_any_axis());
-        assert!(!b2.layers.is_empty_on_any_axis());
-
-        if b1.layers == b2.layers {
-            return; // don't try to merge same blocks
-        }
-
-        let mut b1_attitudes = b1.indistinguishable_attitudes(ndim).collect_vec();
-        let b2_attitudes = b2.indistinguishable_attitudes(ndim).collect_vec();
-        if !b1_attitudes.iter().any(|a| b2_attitudes.contains(a)) {
-            assert_eq!(None, b1.try_merge(b2, ndim));
-            assert_eq!(None, b2.try_merge(b1, ndim)); // commutativity
-            b1.attitude = b2.attitude;
-            b1_attitudes = b1.indistinguishable_attitudes(ndim).collect();
-        }
-
-        let layers1 = b1.layers.unpack();
-        let layers2 = b2.layers.unpack();
-
-        let mut num_same_axes = 0;
-        let mut num_mergeable_axes = 0;
-        for (l1, l2) in std::iter::zip(layers1, layers2) {
-            let same = l1 == l2;
-            num_same_axes += same as usize;
-            let disjoint = (l1 & l2 == 0) && (l1 | l2 != 0b101);
-            num_mergeable_axes += disjoint as usize;
-        }
-
-        let actual_merged = b1.try_merge(b2, ndim);
-        assert_eq!(actual_merged, b2.try_merge(b1, ndim)); // commutativity
-
-        assert_eq!(
-            num_same_axes == 3 && num_mergeable_axes == 1,
-            actual_merged.is_some(),
-        );
-
-        if let Some(m) = actual_merged {
-            assert_eq!(b1.layers | b2.layers, m.layers);
-            assert!(b1_attitudes.contains(&m.attitude));
-            assert!(b2_attitudes.contains(&m.attitude));
+    #[test]
+    fn test_radix_sort_key() {
+        for (shift, mul) in [(0, 1), (1, 3), (2, 9), (3, 27)] {
+            assert_eq!(radix_sort_key_from_layers(0x001 << shift), 1 * mul);
+            assert_eq!(radix_sort_key_from_layers(0x010 << shift), 2 * mul);
+            assert_eq!(radix_sort_key_from_layers(0x100 << shift), 0 * mul);
+            assert_eq!(radix_sort_key_from_layers(0x011 << shift), 2 * mul);
+            assert_eq!(radix_sort_key_from_layers(0x110 << shift), 2 * mul);
+            assert_eq!(radix_sort_key_from_layers(0x111 << shift), 2 * mul);
         }
     }
 
     #[test]
-    fn test_block_indistinguishable_attitudes() {
-        fn count(b: Block, ndim: usize) -> usize {
-            b.indistinguishable_attitudes(ndim).count()
-        }
+    fn test_merge_core_center() {
+        let core = Block::from_layer_bits(0x0F0); // core
+        let mut center = Block::from_layer_bits(0x0E1); // R center
+        let merged = Block::from_layer_bits(0xF1);
+        assert_eq!(Block::merge(core, center), merged);
+        center = elements::YZ * center;
+        assert_eq!(
+            Block::merge(core, center),
+            merged.with_attitude(elements::YZ),
+        );
+    }
 
-        // 4D
-        for ((ndim, grips, rotations), (center_orientations, ridge_orientations)) in [
-            (
-                (3, CUBE_GRIPS.as_slice(), crate::CUBE_ROTATIONS.as_slice()),
-                (4, 1),
-            ),
-            ((4, &HYPERCUBE_GRIPS, &*crate::HYPERCUBE_ROTATIONS), (24, 4)),
-        ] {
-            for &elem in rotations {
-                let core = Block::new([], grips.iter().copied(), elem).unwrap();
-                assert_eq!(1, count(core, ndim)); // core
+    #[test]
+    fn test_merge_center_ridge() {
+        let mut center = Block::from_layer_bits(0x0F1); // core + R center
+        let mut ridge = Block::from_layer_bits(0xD3); // U center + RU ridge
+        let merged = Block::from_layer_bits(0xF3);
+        assert_eq!(Block::merge(center, ridge), merged);
+        center = elements::YZ * center; // keeps X fixed
+        ridge = elements::ZW * ridge; // keeps XY fixed
+        assert_eq!(Block::merge(center, ridge), elements::ZW * merged);
+        ridge = elements::XW * ridge; // keeps Y fixed, but moves X
+        assert_eq!(Block::merge(center, ridge), Block::EMPTY);
+    }
 
-                for &g1 in grips {
-                    let b1 = core.expand_to_active_grip(g1);
-                    let cases = [
-                        b1,
-                        b1.restrict_to_active_grip(g1).unwrap(),
-                        b1.expand_to_active_grip(g1.opposite()),
-                    ];
-                    for case in cases {
-                        assert_eq!(center_orientations, count(case, ndim));
-                    }
-                    for &g2 in grips
-                        .into_iter()
-                        .filter(|&g2| g2.axis_deprecated() != g1.axis_deprecated())
-                    {
-                        let blocked = cases.map(|b| b.expand_to_active_grip(g2));
-                        let active = blocked.map(|b| b.restrict_to_active_grip(g2).unwrap());
-                        let double_blocked =
-                            blocked.map(|b| b.expand_to_active_grip(g2.opposite()));
-                        let cases = [blocked, active, double_blocked];
-                        for &case in cases.as_flattened() {
-                            assert_eq!(ridge_orientations, count(case, ndim));
-                        }
-                        for &g3 in grips.into_iter().filter(|&g3| {
-                            g3.axis_deprecated() != g1.axis_deprecated()
-                                && g3.axis_deprecated() != g2.axis_deprecated()
-                        }) {
-                            for b in cases.as_flattened() {
-                                let blocked = b.expand_to_active_grip(g3);
-                                let active = blocked.restrict_to_active_grip(g3).unwrap();
-                                let double_blocked = blocked.expand_to_active_grip(g3.opposite());
-                                for case in [blocked, active, double_blocked] {
-                                    assert_eq!(1, count(case, ndim));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    #[test]
+    fn test_merge_ridge_edge() {
+        let mut ridge = Block::from_layer_bits(0xD3); // U center + RU ridge
+        let mut edge = Block::from_layer_bits(0x5B); // UI ridge + RUI edge
+        let merged = Block::from_layer_bits(0xDB);
+        assert_eq!(Block::merge(ridge, edge), merged);
+        ridge = elements::WZ * ridge; // ZW is indistinguishable on ridge
+        assert_eq!(Block::merge(ridge, edge), merged);
+        edge = elements::ZW * edge; // ZW is indistinguishable on ridge
+        assert_eq!(Block::merge(ridge, edge), elements::ZW * merged);
+        ridge = elements::XW * ridge; // keeps Z (previously Y) fixed
+        edge = elements::XW * edge;
+        assert_eq!(
+            Block::merge(ridge, edge),
+            elements::XW * elements::ZW * merged,
+        );
     }
 }

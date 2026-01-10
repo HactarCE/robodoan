@@ -1,68 +1,98 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::str::FromStr;
 
 use itertools::Itertools;
+use rand::Rng;
+use rand::seq::IndexedRandom;
 
-use super::elements::*;
-use super::grips::*;
-
-#[static_init::dynamic]
-pub static TWIST_NAMES_3D: HashMap<Twist, String> = twist_names_3d();
-#[static_init::dynamic]
-pub static TWIST_NAMES_4D: HashMap<Twist, String> = twist_names_4d();
+use super::element::*;
+use super::grip::*;
 
 #[static_init::dynamic]
-pub static TWISTS_FROM_NAME: HashMap<String, Twist> =
-    itertools::chain(&*TWIST_NAMES_3D, &*TWIST_NAMES_4D)
-        .map(|(t, s)| (s.clone(), *t))
-        .collect();
+static TWIST_NAMES: HashMap<Twist, String> = twist_names_4d();
 
+#[static_init::dynamic]
+static TWIST_FROM_NAME: HashMap<String, Twist> =
+    TWIST_NAMES.iter().map(|(t, s)| (s.clone(), *t)).collect();
+
+#[static_init::dynamic]
+static ALL_TWISTS: Vec<Twist> = Grip::ALL.into_iter().flat_map(|g| g.twists()).collect();
+
+/// Parses a space-separated list of twist names.
+pub fn parse_twists(s: &str) -> Vec<Twist> {
+    s.split_whitespace()
+        .map(|word| word.parse().expect("unknown twist"))
+        .collect()
+}
+
+/// Returns a sequence of random twists.
+pub fn random_twists(rng: &mut impl Rng, count: usize) -> Vec<Twist> {
+    (0..count)
+        .map(move |_| ALL_TWISTS.choose(rng).copied().unwrap())
+        .collect()
+}
+
+/// Twist of a 4-dimensional Rubik's cube
 #[derive(Default, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Twist {
-    pub grip: GripId,
-    pub transform: ElemId,
+    /// Grip affected by the twist.
+    pub grip: Grip,
+    /// Transform applied to pieces by the twist.
+    pub transform: Elem,
 }
+
+impl FromStr for Twist {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        TWIST_FROM_NAME.get(s).copied().ok_or(())
+    }
+}
+
 impl Twist {
-    pub const fn new(grip: GripId, transform: ElemId) -> Self {
+    /// Constructs a twist.
+    ///
+    /// Panics if the twist transform does not fix the grip.
+    pub fn new(grip: Grip, transform: Elem) -> Self {
+        assert_eq!(transform * grip, grip, "twist transform does not fix grip");
         Self { grip, transform }
     }
 
+    /// Returns the grip affected by the twist.
+    pub fn grip(self) -> Grip {
+        self.grip
+    }
+
+    /// Returns the transform applied to pieces by the twist.
+    pub fn transform(self) -> Elem {
+        self.transform
+    }
+
+    /// Returns the inverse twist.
     #[must_use]
     pub fn inv(self) -> Self {
         Self::new(self.grip, self.transform.inv())
     }
-
-    pub(crate) fn assert_is_valid(&self) {
-        #[cfg(debug_assertions)]
-        assert_eq!(
-            self.grip,
-            self.transform * self.grip,
-            "transform does not fix grip",
-        );
-    }
 }
+
 impl fmt::Debug for Twist {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}[{}]", self.grip, self.transform)
     }
 }
+
 impl fmt::Display for Twist {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if crate::USE_3D_TWIST_NAMES
-            && let Some(s) = TWIST_NAMES_3D.get(self)
-        {
-            write!(f, "{s}")
-        } else if let Some(s) = TWIST_NAMES_4D.get(self) {
-            write!(f, "{s}")
-        } else {
-            write!(f, "{self:?}")
+        match TWIST_NAMES.get(self) {
+            Some(s) => write!(f, "{s}"),
+            None => write!(f, "{self:?}"),
         }
     }
 }
 
 impl TransformByElem for Twist {
-    #[inline]
-    fn transform_by(self, elem: ElemId) -> Self {
+    fn transform_by(self, elem: Elem) -> Self {
         Twist {
             grip: elem * self.grip,
             transform: elem.transform(self.transform),
@@ -70,25 +100,10 @@ impl TransformByElem for Twist {
     }
 }
 
-fn twist_names_3d() -> HashMap<Twist, String> {
-    let r = Twist::new(R, ZY);
-    let r2 = Twist::new(R, ZY * ZY);
-    let r3 = Twist::new(R, YZ);
-
-    let mut ret = HashMap::new();
-    for offset in *CUBE_ROTATIONS {
-        let r_grip = offset * R;
-        ret.entry(offset.transform(r))
-            .or_insert(format!("{r_grip}"));
-        ret.entry(offset.transform(r2))
-            .or_insert(format!("{r_grip}2"));
-        ret.entry(offset.transform(r3))
-            .or_insert(format!("{r_grip}'"));
-    }
-    ret
-}
-
 fn twist_names_4d() -> HashMap<Twist, String> {
+    use super::elements::*;
+    use super::grips::*;
+
     let iu = Twist {
         grip: I,
         transform: XZ,
@@ -107,7 +122,7 @@ fn twist_names_4d() -> HashMap<Twist, String> {
     };
 
     let mut ret = HashMap::new();
-    for offset in *HYPERCUBE_ROTATIONS {
+    for offset in Elem::iter_all() {
         let i = offset * I;
         let u = offset * U;
         let r = offset * R;
@@ -126,7 +141,9 @@ fn twist_names_4d() -> HashMap<Twist, String> {
 }
 
 /// Sort a list of unique grips according to the order used in HSC1 log files.
-fn hsc1_sort<const N: usize>(grips: [GripId; N]) -> [GripId; N] {
+fn hsc1_sort<const N: usize>(grips: [Grip; N]) -> [Grip; N] {
+    use super::grips::*;
+
     [U, D, F, B, R, L, O, I]
         .into_iter()
         .filter(|g| grips.contains(g))

@@ -1,6 +1,16 @@
 use itertools::Itertools;
 
-use crate::sim::*;
+use crate::sim::blockbuilding::Block;
+use crate::sim::common::*;
+
+const _STAGE_MIDLEFT_1: u8 = 1;
+const _STAGE_MIDLEFT_2: u8 = 2;
+const _STAGE_MIDLEFT_3: u8 = 3;
+const _STAGE_RIGHT_1: u8 = 4;
+const _STAGE_RIGHT_2: u8 = 5;
+const _STAGE_FRONT_RIGHT: u8 = 6;
+
+pub type Continuation = (Block, SolutionMetadata);
 
 /// Metadata about a particular solution.
 ///
@@ -8,14 +18,26 @@ use crate::sim::*;
 /// which helps when figuring out the next blocks to solve.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct SolutionMetadata {
-    stage: u16,
-    first_block: Block,
-    second_block: Block,
-    third_block: Block,
-
-    last_layer: Option<GripId>, // last grip (last layer)
-    right_grip: Option<GripId>, // second-to-last grip (right block in typical 3-block)
-    front_grip: Option<GripId>, // third-to-last grip (front grip in typical 3-block)
+    /// Stage of the solution.
+    stage: u8,
+    /// Grips blocked on the mid+left block.
+    ///
+    /// Once there are 6 blocked grips, the next step is to begin the right
+    /// block.
+    left_blocked_grips: GripSet,
+    /// Right block active grip.
+    ///
+    /// This is undefined before [`_STAGE_RIGHT_1`].
+    right_grip: Grip,
+    /// Grips blocked on the right block.
+    ///
+    /// Once there are 4 blocked grips, the next step is to begin the last
+    /// layer.
+    right_blocked_grips: GripSet,
+    /// Last layer grip.
+    ///
+    /// This is undefined before [`_STAGE_RIGHT_1`].
+    last_layer: Grip,
 }
 
 impl SolutionMetadata {
@@ -24,91 +46,81 @@ impl SolutionMetadata {
         self
     }
 
-    fn with_last_layer(mut self, grip: GripId) -> Self {
-        self.last_layer = Some(grip);
+    pub fn last_layer(self) -> Grip {
+        assert!(self.stage >= _STAGE_RIGHT_1);
+        self.last_layer
+    }
+
+    fn with_left_blocked_grips(mut self, grips: GripSet) -> Continuation {
+        self.left_blocked_grips |= grips;
+        (Block::CORE.expand(self.left_blocked_grips), self)
+    }
+    fn with_right_grip(mut self, g: Grip) -> Self {
+        self.right_grip = g;
         self
     }
-    pub fn last_layer(self) -> GripId {
-        self.last_layer.unwrap()
-    }
-
-    fn with_right_grip(mut self, grip: GripId) -> Self {
-        self.right_grip = Some(grip);
+    fn with_last_layer(mut self, g: Grip) -> Self {
+        self.last_layer = g;
         self
     }
-    fn right_grip(self) -> GripId {
-        self.right_grip.unwrap()
+    fn with_right_blocked_grips(mut self, grips: GripSet) -> Continuation {
+        self.right_blocked_grips |= grips;
+        let right_center = Piece::new_solved([self.right_grip]);
+        let right_block = Block::from(right_center).expand(self.right_blocked_grips);
+        (right_block, self)
     }
 
-    fn with_front_grip(mut self, grip: GripId) -> Self {
-        self.front_grip = Some(grip);
-        self
-    }
-    fn front_grip(self) -> GripId {
-        self.front_grip.unwrap()
+    fn next_stage_expand_left_block(self) -> impl IntoIterator<Item = Continuation> {
+        ((!self.left_blocked_grips).iter())
+            .map(move |g| self.next_stage().with_left_blocked_grips(GripSet::from(g)))
     }
 
-    fn with_first_block(mut self, block: Block) -> (Block, Self) {
-        self.first_block = block;
-        (block, self)
-    }
-    fn with_second_block(mut self, block: Block) -> (Block, Self) {
-        self.second_block = block;
-        (block, self)
-    }
-    fn with_third_block(mut self, block: Block) -> (Block, Self) {
-        self.third_block = block;
-        (block, self)
+    fn next_stage_expand_right_block(self) -> impl IntoIterator<Item = Continuation> {
+        (self.right_blocked_grips.opposites()
+            & !self.right_blocked_grips
+            & !GripSet::from(self.last_layer))
+        .iter()
+        .map(move |g| self.next_stage().with_right_blocked_grips(GripSet::from(g)))
     }
 
-    pub fn stage1(self) -> impl IntoIterator<Item = (Block, Self)> {
+    pub fn stage1(self) -> impl IntoIterator<Item = Continuation> {
+        use axes::*;
+
         assert_eq!(self.stage, 0);
-        itertools::iproduct!([R, L], [U, D], [F, B], [I, O])
-            .map(|(x, y, z, w)| Block::new_solved([], [x, y, z, w]).unwrap())
-            .map(move |block| self.next_stage().with_first_block(block))
+        itertools::iproduct!(X.grips(), Y.grips(), Z.grips(), W.grips())
+            .map(|(x, y, z, w)| GripSet::from_iter([x, y, z, w]))
+            .map(move |blocked_grips| self.next_stage().with_left_blocked_grips(blocked_grips))
     }
-    pub fn stage2(self) -> impl IntoIterator<Item = (Block, Self)> {
+    pub fn stage2(self) -> impl IntoIterator<Item = Continuation> {
         assert_eq!(self.stage, 1);
-        (self.first_block.inactive_grips().iter())
-            .map(move |grip| self.first_block.expand_to_active_grip(grip))
-            .map(move |block| self.next_stage().with_first_block(block))
+        self.next_stage_expand_left_block()
     }
-    pub fn stage3(self) -> impl IntoIterator<Item = (Block, Self)> {
+    pub fn stage3(self) -> impl IntoIterator<Item = Continuation> {
         assert_eq!(self.stage, 2);
-        (self.first_block.inactive_grips().iter())
-            .map(move |grip| self.first_block.expand_to_active_grip(grip))
-            .map(move |block| self.next_stage().with_first_block(block))
+        self.next_stage_expand_left_block()
     }
-    pub fn stage4(self) -> impl IntoIterator<Item = (Block, Self)> {
+    pub fn stage4(self) -> impl IntoIterator<Item = Continuation> {
         assert_eq!(self.stage, 3);
-        let [g1, g2] = self.first_block.inactive_grips().unwrap_exactly_two();
-        let [ax1, ax2] = [0, 1, 2, 3]
+        let [g1, g2] = (!self.left_blocked_grips).unwrap_two();
+        let [ax1, ax2] = Axis::ALL
             .into_iter()
-            .filter(|&axis| self.first_block.is_fully_blocked_on_axis(axis))
+            .filter(|&axis| (GripSet::from(axis) & !self.left_blocked_grips).is_empty())
             .collect_array()
             .unwrap()
-            .map(GripId::pair_on_axis_deprecated);
+            .map(Axis::grips);
         itertools::iproduct!([[g1, g2], [g2, g1]], ax1, ax2).map(move |([g1, g2], g3, g4)| {
             self.next_stage()
                 .with_right_grip(g1)
                 .with_last_layer(g2)
-                .with_second_block(Block::new_solved([g1], [g2, g3, g4]).unwrap())
+                .with_right_blocked_grips(GripSet::from_iter([g2.opposite(), g3, g4]))
         })
     }
-    pub fn stage5(self) -> impl IntoIterator<Item = (Block, Self)> {
+    pub fn stage5(self) -> impl IntoIterator<Item = Continuation> {
         assert_eq!(self.stage, 4);
-        let [g1, g2] =
-            (self.second_block.blocked_grips() - self.last_layer().opposite()).unwrap_exactly_two();
-        [[g1, g2], [g2, g1]].map(move |[a, b]| {
-            self.next_stage()
-                .with_front_grip(b.opposite())
-                .with_second_block(self.second_block.expand_to_active_grip(a.opposite()))
-        })
+        self.next_stage_expand_right_block()
     }
-    pub fn stage6(self) -> impl IntoIterator<Item = (Block, Self)> {
+    pub fn stage6(self) -> impl IntoIterator<Item = Continuation> {
         assert_eq!(self.stage, 5);
-        let block =
-            Block::new_solved([self.front_grip(), self.right_grip()], [self.last_layer()]).unwrap();
-        [self.next_stage().with_third_block(block)]
+        self.next_stage_expand_right_block()
     }
 }

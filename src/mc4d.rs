@@ -49,6 +49,7 @@ struct Mc4dTwist {
     multiplier: i8,
     layer_mask: u8,
 }
+
 impl fmt::Display for Mc4dTwist {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
@@ -59,6 +60,7 @@ impl fmt::Display for Mc4dTwist {
         write!(f, "{sticker},{multiplier},{layer_mask}")
     }
 }
+
 impl FromStr for Mc4dTwist {
     type Err = ();
 
@@ -72,6 +74,7 @@ impl FromStr for Mc4dTwist {
         })
     }
 }
+
 impl Mc4dTwist {
     pub fn new(sticker: usize, multiplier: i8, layer_mask: u8) -> Self {
         Self {
@@ -88,7 +91,7 @@ impl Mc4dTwist {
             if self.multiplier < 0 { t.inv() } else { t },
             self.multiplier.unsigned_abs() as usize,
         )
-        .fold(IDENT, |a, b| a * b);
+        .fold(Elem::IDENT, |a, b| a * b);
 
         LayeredTwist {
             twist: Twist { grip, transform },
@@ -102,8 +105,9 @@ struct LayeredTwist {
     twist: Twist,
     layer_mask: u8,
 }
+
 impl LayeredTwist {
-    pub fn to_twists(self, puzzle_offset: &mut ElemId) -> StackVec<Twist, 2> {
+    pub fn to_twists(self, puzzle_offset: &mut Elem) -> StackVec<Twist, 2> {
         let Self {
             mut twist,
             mut layer_mask,
@@ -146,8 +150,9 @@ pub struct Mc4dScramble {
     mc4d_scramble: Vec<Mc4dTwist>,
 
     scramble: Vec<Twist>,
-    puzzle_offset_from_scramble: ElemId,
+    puzzle_offset_from_scramble: Elem,
 }
+
 impl FromStr for Mc4dScramble {
     type Err = &'static str;
 
@@ -197,7 +202,7 @@ impl FromStr for Mc4dScramble {
         }
 
         let mut scramble = vec![];
-        let mut puzzle_offset = IDENT;
+        let mut puzzle_offset = Elem::IDENT;
         for &mc4d_twist in &mc4d_scramble {
             scramble.extend(mc4d_twist.to_layered_twist().to_twists(&mut puzzle_offset));
         }
@@ -212,6 +217,7 @@ impl FromStr for Mc4dScramble {
         })
     }
 }
+
 impl Mc4dScramble {
     pub fn to_string(&self, solved: bool, solve_twists: Vec<Twist>) -> String {
         let move_count = solve_twists.len();
@@ -249,16 +255,16 @@ impl Mc4dScramble {
     }
 }
 
-const UNIT_VECTORS: [Vec4; 4] = [X, Y, Z, W];
-
 fn mc4d_twist_order() -> Vec<Option<Twist>> {
+    use grips::*;
+
     let seed_twists = [
-        ((I, vec4(-1, 0, 0, 0)), TWISTS_FROM_NAME["IR"]),
-        ((I, vec4(-1, -1, 0, 0)), TWISTS_FROM_NAME["IUR"]),
-        ((I, vec4(-1, -1, -1, 0)), TWISTS_FROM_NAME["IUFR"]),
+        ((I, vec4(-1, 0, 0, 0)), "IR".parse().unwrap()),
+        ((I, vec4(-1, -1, 0, 0)), "IUR".parse().unwrap()),
+        ((I, vec4(-1, -1, -1, 0)), "IUFR".parse().unwrap()),
     ];
-    let twist_from_grip_and_fixed_vec: HashMap<(GripId, Vec4), Twist> =
-        itertools::iproduct!(*HYPERCUBE_ROTATIONS, seed_twists)
+    let twist_from_grip_and_fixed_vec: HashMap<(Grip, Vec4), Twist> =
+        itertools::iproduct!(Elem::iter_all(), seed_twists)
             .map(|(elem, ((grip, sticker_vector), twist))| {
                 ((elem * grip, elem * sticker_vector), elem.transform(twist))
             })
@@ -270,12 +276,15 @@ fn mc4d_twist_order() -> Vec<Option<Twist>> {
         .flat_map(|grip| {
             let twist_from_grip_and_fixed_vec = &twist_from_grip_and_fixed_vec;
 
-            let mut basis = basis_faces(grip);
-            basis.sort_by_key(|f| f.axis_deprecated()); // order: X, Y, Z, W
+            let mut basis = Axis::ALL
+                .into_iter()
+                .filter(|&ax| ax != grip.axis())
+                .collect_vec();
+            basis.sort(); // order: X, Y, Z, W
             basis.reverse(); // order: W, Z, Y, X
-            let mc4d_basis_1 = UNIT_VECTORS[basis[0].axis_deprecated()];
-            let mc4d_basis_2 = UNIT_VECTORS[basis[1].axis_deprecated()];
-            let mc4d_basis_3 = UNIT_VECTORS[basis[2].axis_deprecated()];
+            let mc4d_basis_1 = basis[0].pos_grip().vec();
+            let mc4d_basis_2 = basis[1].pos_grip().vec();
+            let mc4d_basis_3 = basis[2].pos_grip().vec();
 
             let piece_locations =
                 itertools::iproduct!([-1, 0, 1], [-1, 0, 1], [-1, 0, 1]).map(|(x, y, z)| [x, y, z]);
@@ -286,7 +295,7 @@ fn mc4d_twist_order() -> Vec<Option<Twist>> {
             let mc4d_order_piece_locations = corners.chain(edges).chain(ridges).chain(center);
 
             mc4d_order_piece_locations.map(move |mc4d_coords_of_sticker_within_face: [i8; 3]| {
-                let fixed_vector = ZERO
+                let fixed_vector = vectors::ZERO
                     + mc4d_basis_1 * mc4d_coords_of_sticker_within_face[0]
                     + mc4d_basis_2 * mc4d_coords_of_sticker_within_face[1]
                     + mc4d_basis_3 * mc4d_coords_of_sticker_within_face[2];
@@ -300,18 +309,4 @@ fn mc4d_twist_order() -> Vec<Option<Twist>> {
 
 fn abs_sum<const N: usize>(xs: &[i8; N]) -> i8 {
     xs.map(|x| x.abs()).iter().sum()
-}
-
-fn basis_faces(g: GripId) -> [GripId; 3] {
-    let w = match g.signum() {
-        1 => O,
-        -1 => I,
-        _ => unreachable!(),
-    };
-
-    [
-        if g.axis_deprecated() == 0 { w } else { R },
-        if g.axis_deprecated() == 1 { w } else { U },
-        if g.axis_deprecated() == 2 { w } else { F },
-    ]
 }

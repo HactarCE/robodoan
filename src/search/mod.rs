@@ -1,7 +1,6 @@
 use std::sync::atomic::AtomicIsize;
 
-use itertools::Itertools;
-use rayon::prelude::*;
+use crate::sim::*;
 
 mod heuristic;
 mod meta;
@@ -9,30 +8,23 @@ mod params;
 mod segment;
 
 pub use heuristic::Heuristic;
-use meta::SolutionMetadata;
-pub use params::BlockBuildingSearchParams;
+use itertools::Itertools;
+pub use meta::{Continuation, SolutionMetadata};
+pub use params::{BlockBuildingSearchParams, Targets};
+use rayon::iter::{
+    IntoParallelIterator, IntoParallelRefIterator, ParallelExtend, ParallelIterator,
+};
 pub use segment::{Segment, SegmentId, SegmentStore};
 
-use crate::sim::*;
-use crate::{MAX_SOLUTION_COUNT, Profile};
-
 pub struct Solver {
-    profile: Profile,
-    puzzle: &'static Puzzle,
     params: BlockBuildingSearchParams,
     segments: SegmentStore,
 }
+
 impl Solver {
-    pub fn new(profile: Profile, scramble: impl Into<Vec<Twist>>) -> Self {
+    pub fn new(params: BlockBuildingSearchParams, scramble: impl Into<Vec<Twist>>) -> Self {
         Self {
-            profile,
-            puzzle: &*RUBIKS_4D,
-            params: BlockBuildingSearchParams {
-                heuristic: Heuristic::Fast,
-                max_depth: 4,
-                parallel_depth: 2,
-                verbosity: 2,
-            },
+            params,
             segments: SegmentStore::new(scramble.into()),
         }
     }
@@ -40,25 +32,25 @@ impl Solver {
     pub fn solve(mut self) -> Vec<Twist> {
         let start = std::time::Instant::now();
 
-        // Keep the call graph flat for recursion.
+        let targets = self.params.targets;
 
         println!("\nSTAGE 1: mid + left, 2x2x2x2 block");
-        self.do_blockbuilding_stage(self.profile.select(1, 5), |meta| meta.stage1());
+        self.do_blockbuilding_stage(targets.select(1, 5), |meta| meta.stage1());
 
         println!("\nSTAGE 2: mid + left, 2x2x3x2 block");
-        self.do_blockbuilding_stage(self.profile.select(1, 5), |meta| meta.stage2());
+        self.do_blockbuilding_stage(targets.select(1, 5), |meta| meta.stage2());
 
         println!("\nSTAGE 3: mid + left, 2x3x3x2 block");
-        self.do_blockbuilding_stage(self.profile.select(2, 6), |meta| meta.stage3());
+        self.do_blockbuilding_stage(targets.select(2, 6), |meta| meta.stage3());
 
         println!("\nSTAGE 4: right (mid + left), 2x2x2x1 block");
-        self.do_blockbuilding_stage(self.profile.select(2, 6), |meta| meta.stage4());
+        self.do_blockbuilding_stage(targets.select(2, 6), |meta| meta.stage4());
 
         println!("\nSTAGE 5: right (mid + left), 2x2x3x1 block");
-        self.do_blockbuilding_stage(self.profile.select(2, 5), |meta| meta.stage5());
+        self.do_blockbuilding_stage(targets.select(2, 5), |meta| meta.stage5());
 
         println!("\nSTAGE 6: F2L");
-        self.do_blockbuilding_stage(self.profile.select(1, 1), |meta| meta.stage6());
+        self.do_blockbuilding_stage(targets.select(1, 1), |meta| meta.stage6());
 
         println!("\nTotal elapsed time: {:?}", start.elapsed());
 
@@ -73,8 +65,8 @@ impl Solver {
         let twists_of_best_solution = self.segments.solution_twists_for_segment(best_solution);
         println!("{}", twists_of_best_solution.iter().join(" "));
 
-        let mut initial_state = PuzzleState::default();
-        initial_state.do_twists(&self.segments.scramble);
+        // let mut initial_state = PuzzleState::default();
+        // initial_state.do_twists(&self.segments.scramble);
 
         let all_solutions = self
             .segments
@@ -82,14 +74,18 @@ impl Solver {
             .unwrap()
             .iter()
             .map(|&id| {
-                let segment = &self.segments[id];
                 let twists = self.segments.solution_twists_for_segment(id);
-                let mut state = initial_state.clone();
-                state.do_twists(&twists);
-                // let orientation_score = state.unoriented_pieces(segment.meta.last_layer());
-                let orientation_score = [0; 3];
-                (twists.len(), orientation_score, twists)
+                (twists.len(), twists)
             })
+            //     .map(|&id| {
+            //         let segment = &self.segments[id];
+            //         let twists = self.segments.solution_twists_for_segment(id);
+            //         let mut state = initial_state.clone();
+            //         state.do_twists(&twists);
+            //         // let orientation_score =
+            // state.unoriented_pieces(segment.meta.last_layer());         let
+            // orientation_score = [0; 3];         (twists.len(), orientation_score,
+            // twists)     })
             .sorted();
 
         let out_file_name = "out.txt";
@@ -97,10 +93,14 @@ impl Solver {
             out_file_name,
             all_solutions
                 .into_iter()
-                .map(|(twist_count, orientation_score, twists)| {
+                .map(|(twist_count, twists)| {
                     let twists_str = twists.iter().join(" ");
-                    format!("{twist_count:3} {orientation_score:2?}    {twists_str}")
+                    format!("{twist_count:3}    {twists_str}")
                 })
+                //         .map(|(twist_count, orientation_score, twists)| {
+                //             let twists_str = twists.iter().join(" ");
+                //             format!("{twist_count:3} {orientation_score:2?}    {twists_str}")
+                //         })
                 .join("\n"),
         )
         .unwrap();
@@ -109,7 +109,7 @@ impl Solver {
         twists_of_best_solution
     }
 
-    fn do_blockbuilding_stage<I: IntoIterator<Item = (Block, SolutionMetadata)>>(
+    fn do_blockbuilding_stage<I: IntoIterator<Item = Continuation>>(
         &mut self,
         target_block_count: usize,
         make_target_blocks: impl Send + Sync + Fn(SolutionMetadata) -> I,
@@ -129,7 +129,7 @@ impl Solver {
                         let setup_moves =
                             this.segments.all_prior_twists_for_segment(prev_segment_id);
                         if let Some(new_segment) =
-                            prev_segment.push_block(this.puzzle, &setup_moves, new_block, new_meta)
+                            prev_segment.push_block(&setup_moves, new_block, new_meta)
                         {
                             results.push(new_segment);
                         }
@@ -175,12 +175,8 @@ impl Solver {
         let new_segments = self.do_step(|this, prev_segments| {
             let mut new_segments = vec![];
             for depth in 0..=this.params.max_depth {
-                let desired_solution_count = match depth {
-                    ..=1 => crate::MIN_SOLUTION_COUNT_DEPTH_1,
-                    2 => crate::MIN_SOLUTION_COUNT_DEPTH_2,
-                    3 => crate::MIN_SOLUTION_COUNT_DEPTH_3,
-                    4.. => crate::MIN_SOLUTION_COUNT_DEPTH_4,
-                };
+                let desired_solution_count = this.params.solution_count_targets
+                    [depth.min(this.params.solution_count_targets.len() - 1)];
                 let solutions_left_to_find =
                     desired_solution_count.saturating_sub(new_segments.len());
                 overprint!("  Blockbuilding to {block_target} at depth {depth} ...");
@@ -192,7 +188,6 @@ impl Solver {
                             let mut results = vec![];
                             dfs_blockbuild(
                                 this.params,
-                                this.puzzle,
                                 block_target,
                                 depth,
                                 &mut results,
@@ -219,7 +214,7 @@ impl Solver {
 
         let min_twist_count = new_segments
             .iter()
-            .map(|s| s.total_twist_count)
+            .map(|s| s.state.twist_count())
             .min()
             .unwrap_or(0);
         overprintln!(
@@ -260,7 +255,7 @@ impl Solver {
             log!(self.params, 3, "Best solution: {best}");
             let twist_count_sums = new_solution_segments
                 .iter()
-                .map(|s| s.total_twist_count)
+                .map(|s| s.state.twist_count())
                 .counts()
                 .into_iter()
                 .sorted()
@@ -269,13 +264,15 @@ impl Solver {
             log!(self.params, 4, "By twist count: {{{twist_count_sums}}}");
         }
 
-        if new_solution_segments.len() > MAX_SOLUTION_COUNT {
+        let max_solution_count = self.params.solution_count_targets[0];
+
+        if new_solution_segments.len() > max_solution_count {
             log!(
                 self.params,
                 3,
-                "Truncating to {MAX_SOLUTION_COUNT} solutions"
+                "Truncating to {max_solution_count} solutions"
             );
-            new_solution_segments.truncate(MAX_SOLUTION_COUNT);
+            new_solution_segments.truncate(max_solution_count);
         }
 
         new_solution_segments
@@ -289,7 +286,6 @@ impl Solver {
 #[allow(clippy::too_many_arguments)]
 pub fn dfs_blockbuild(
     params: BlockBuildingSearchParams,
-    puzzle: &Puzzle,
     expected_blocks: usize,
     remaining_depth: usize,
     solutions_buffer: &mut Vec<Segment>,
@@ -321,7 +317,7 @@ pub fn dfs_blockbuild(
 
     if !params
         .heuristic
-        .might_be_solvable(puzzle, &state, expected_blocks, remaining_depth)
+        .might_be_solvable(state, expected_blocks, remaining_depth)
     {
         return; // probably not solvable; give up
     }
@@ -329,14 +325,14 @@ pub fn dfs_blockbuild(
     let mut last_grips = segment_twists.iter().rev().map(|twist| twist.grip);
     let last_grip = last_grips.next();
     let second_to_last_grip = last_grips.next();
-    let grip_is_worth_testing = |grip: &&GripData| {
-        if last_grip == Some(grip.id) {
+    let grip_is_worth_testing = |&grip: &Grip| {
+        if last_grip == Some(grip) {
             return false; // same grip as last move
         }
-        if last_grip == Some(grip.id.opposite()) && second_to_last_grip == Some(grip.id) {
+        if last_grip == Some(grip.opposite()) && second_to_last_grip == Some(grip) {
             return false; // opposite grip already moved
         }
-        if state.blocks().iter().all(|b| b.is_grip_inactive(grip.id)) {
+        if state.blocks().iter().all(|b| b.is_grip_inactive(grip)) {
             return false; // doesn't move any block
         }
         // TODO: don't check opposite if it was 2nd-to-last move
@@ -344,10 +340,9 @@ pub fn dfs_blockbuild(
     };
 
     let explore_twist = |twist, solutions_buffer: &mut Vec<Segment>| {
-        if let Some(new_partial_solution) = solution_so_far.push_twist(twist, last_grip) {
+        if let Some(new_partial_solution) = solution_so_far.push_twist(twist) {
             dfs_blockbuild(
                 params,
-                puzzle,
                 expected_blocks,
                 remaining_depth - 1,
                 solutions_buffer,
@@ -359,15 +354,15 @@ pub fn dfs_blockbuild(
     };
 
     if remaining_parallel_depth > 0 {
-        let grips = puzzle.grips.par_iter().filter(grip_is_worth_testing);
-        let twists = grips.flat_map(|grip| grip.par_twists());
+        let grips = Grip::ALL.into_par_iter().filter(grip_is_worth_testing);
+        let twists = grips.flat_map(|grip| grip.twists());
         solutions_buffer.par_extend(twists.flat_map_iter(|twist| {
             let mut solutions_buffer = vec![];
             explore_twist(twist, &mut solutions_buffer);
             solutions_buffer
         }));
     } else {
-        let grips = puzzle.grips.iter().filter(grip_is_worth_testing);
+        let grips = Grip::ALL.into_iter().filter(grip_is_worth_testing);
         let twists = grips.flat_map(|grip| grip.twists());
         twists.for_each(|twist| explore_twist(twist, solutions_buffer));
     }

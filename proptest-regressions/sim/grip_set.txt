@@ -4,12 +4,12 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc c4a52a44f37142bbf431892699ba50a6b90d040875a7949b4e06921d3308d066 # shrinks to b1 = Block { active_grips: GripSet(0), inactive_grips: GripSet(2), attitude: ElemId(0) }, b2 = Block { active_grips: GripSet(0), inactive_grips: GripSet(0), attitude: ElemId(0) }
-cc 214377170c36c290935d667fbb7c245a2375cc4c67600a4280e43305c16e5cc7 # shrinks to b1 = Block { active_grips: UD, inactive_grips: ∅, attitude: ElemId(0) }, b2 = Block { active_grips: FB, inactive_grips: ∅, attitude: ElemId(0) }
-cc 6324f284846ac69f6c773b9906cb5e5fc71a78713742a54c865aa6858908324b # shrinks to b1 = Block { active_grips: RF, inactive_grips: LDO, attitude: ElemId(0) }, b2 = Block { active_grips: F, inactive_grips: RDBO, attitude: ElemId(0) }
-cc da74729dcfb94ced9bbe5c515b32daad6299588b5599f84f6b5bc8e9f9291b94 # shrinks to b1 = Block { active_grips: RI, inactive_grips: UB, attitude: ElemId(0) }, b2 = Block { active_grips: LI, inactive_grips: RUBO, attitude: ElemId(0) }
-cc d0e9c8e30e2cc3dd7502205b9495606f903da6c5c0477e04e4a82a9c2538eded # shrinks to b1 = 111_111_100_000@[ElemId(0)], b2 = 111_100_100_000@[ElemId(0)]
-cc bc4f330ca5f27a0955e6f4003d2b441d42dca7487be8cd56ccaff76084d60735 # shrinks to b1 = 011_001_001_110@[ElemId(0)], b2 = 001_011_001_110@[ElemId(0)]
-cc ec26fc5cd72cad25d11d818db7cd193708890f630bcb453c62f17bf857758d49 # shrinks to b1 = 100_100_001_001@[ElemId(0)], b2 = 100_100_010_011@[ElemId(0)]
-cc 422c677aba54337c07ddafe399c2b15ebeb69c1b05f49ef0b8301afbf05727f4 # shrinks to b1 = 010_010_010_110@[ElemId(132)], b2 = 010_001_010_110@[ElemId(81)]
-cc 3cbe682a2a32b2995130ded4f79c6de3b660037e21ec170e870a6ec3a157c174 # shrinks to b1 = 110_111_100_100@[ElemId(0)], b2 = 110_111_100_100@[ElemId(0)]
+cc c4a52a44f37142bbf431892699ba50a6b90d040875a7949b4e06921d3308d066 # shrinks to b1 = Block { active_grips: GripSet(0), inactive_grips: GripSet(2), attitude: Elem(0) }, b2 = Block { active_grips: GripSet(0), inactive_grips: GripSet(0), attitude: Elem(0) }
+cc 214377170c36c290935d667fbb7c245a2375cc4c67600a4280e43305c16e5cc7 # shrinks to b1 = Block { active_grips: UD, inactive_grips: ∅, attitude: Elem(0) }, b2 = Block { active_grips: FB, inactive_grips: ∅, attitude: Elem(0) }
+cc 6324f284846ac69f6c773b9906cb5e5fc71a78713742a54c865aa6858908324b # shrinks to b1 = Block { active_grips: RF, inactive_grips: LDO, attitude: Elem(0) }, b2 = Block { active_grips: F, inactive_grips: RDBO, attitude: Elem(0) }
+cc da74729dcfb94ced9bbe5c515b32daad6299588b5599f84f6b5bc8e9f9291b94 # shrinks to b1 = Block { active_grips: RI, inactive_grips: UB, attitude: Elem(0) }, b2 = Block { active_grips: LI, inactive_grips: RUBO, attitude: Elem(0) }
+cc d0e9c8e30e2cc3dd7502205b9495606f903da6c5c0477e04e4a82a9c2538eded # shrinks to b1 = 111_111_100_000@[Elem(0)], b2 = 111_100_100_000@[Elem(0)]
+cc bc4f330ca5f27a0955e6f4003d2b441d42dca7487be8cd56ccaff76084d60735 # shrinks to b1 = 011_001_001_110@[Elem(0)], b2 = 001_011_001_110@[Elem(0)]
+cc ec26fc5cd72cad25d11d818db7cd193708890f630bcb453c62f17bf857758d49 # shrinks to b1 = 100_100_001_001@[Elem(0)], b2 = 100_100_010_011@[Elem(0)]
+cc 422c677aba54337c07ddafe399c2b15ebeb69c1b05f49ef0b8301afbf05727f4 # shrinks to b1 = 010_010_010_110@[Elem(132)], b2 = 010_001_010_110@[Elem(81)]
+cc 3cbe682a2a32b2995130ded4f79c6de3b660037e21ec170e870a6ec3a157c174 # shrinks to b1 = 110_111_100_100@[Elem(0)], b2 = 110_111_100_100@[Elem(0)]
