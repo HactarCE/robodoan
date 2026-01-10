@@ -7,7 +7,7 @@ use super::{Grip, Vec4, group};
 
 /// Element from the grip group.
 #[derive(Default, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Elem(pub u8);
+pub struct Elem(u8);
 
 impl fmt::Debug for Elem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

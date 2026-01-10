@@ -306,6 +306,7 @@ impl BlockList {
                 }
             }
         }
+
         any_merged
     }
 }

@@ -322,7 +322,8 @@ impl Block {
             return Self::EMPTY;
         }
 
-        Self::from_layer_bits(body.layer_bits() | head.layer_bits()).with_attitude(head.attitude())
+        Self::from_layer_bits_nonempty(body.layer_bits() | head.layer_bits())
+            .with_attitude(head.attitude())
     }
 
     /// Returns the number of moves needed to pair `body` and `head`, or `None`
