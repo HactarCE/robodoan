@@ -44,7 +44,7 @@ impl fmt::Debug for Block {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut layers_str = ":".to_string();
         for ax in Axis::ALL {
-            let bits = self.layer_bits_for_grip(ax.grips()[0]);
+            let bits = self.layer_bits_for_grip(ax.pos_grip());
             for i in [8, 4, 0] {
                 let bit = bits & (1 << i) != 0;
                 write!(&mut layers_str, "{}", if bit { ax.char() } else { '_' })?;
@@ -302,7 +302,7 @@ impl Block {
                 // center + ridge matches if the ridge attitude preserves the grip of the center
                 1 => {
                     // assume that centers do not move (core is always stationary)
-                    let g = body.active_or_blocked_axes().unwrap_one().grips()[0];
+                    let g = body.active_or_blocked_axes().unwrap_one().pos_grip();
                     head.attitude() * g == g
                 }
 
@@ -314,7 +314,6 @@ impl Block {
 
                 // edge + corner requires exact attitude match
                 3 | 4 => body.attitude() == head.attitude(),
-
 
                 _ => unreachable!(),
             };

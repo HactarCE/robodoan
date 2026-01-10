@@ -81,7 +81,7 @@ mod tests {
     fn test_mul_elem_axis() {
         for e in Elem::iter_all() {
             for a in Axis::ALL {
-                assert_eq!(e * a, (e * a.grips()[0]).axis())
+                assert_eq!(e * a, (e * a.pos_grip()).axis())
             }
         }
     }
