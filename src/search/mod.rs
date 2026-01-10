@@ -41,7 +41,7 @@ impl Solver {
         self.do_blockbuilding_stage(targets.select(1, 5), |meta| meta.stage2());
 
         println!("\nSTAGE 3: mid + left, 2x3x3x2 block");
-        self.do_blockbuilding_stage(targets.select(2, 6), |meta| meta.stage3());
+        self.do_blockbuilding_stage(targets.select(1, 5), |meta| meta.stage3());
 
         println!("\nSTAGE 4: right (mid + left), 2x2x2x1 block");
         self.do_blockbuilding_stage(targets.select(2, 6), |meta| meta.stage4());
