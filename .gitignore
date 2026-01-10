@@ -2,3 +2,4 @@
 *.hsc
 *.log
 flamegraph.svg
+out.txt
