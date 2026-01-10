@@ -4,21 +4,19 @@ use std::ops::Index;
 
 use super::{Block, BlockListMeta};
 use crate::sim::common::*;
-use crate::util::bitset::{BitSet32, BitSet96};
+use crate::util::bitset::BitSet32;
 
 /// Maxmimum number of blocks that can be stored.
-const MAX_BLOCK_COUNT: u32 = 23;
+const MAX_BLOCK_COUNT: u32 = 26;
 
 /// Partial puzzle state, stored as a list of blocks.
 #[derive(Default, Clone, PartialEq, Eq, Hash)]
 pub struct BlockList {
     /// List of blocks.
     blocks: [Block; MAX_BLOCK_COUNT as usize],
-    /// Bitmask indicating, for each possible inner rank value, the indices of
+    /// Bitmap indicating, for each possible inner rank value, the indices of
     /// blocks with that inner rank.
     inner_ranks: [BitSet32; 5],
-    /// Bitmask indicating which radix sort keys exist.
-    radix_sort_keys: BitSet96,
     /// Packed metadata.
     meta: BlockListMeta,
 }
@@ -33,7 +31,6 @@ impl fmt::Debug for BlockList {
         f.debug_struct("BlockList")
             .field("blocks", &self.blocks())
             .field("inner_ranks", &self.inner_ranks)
-            .field("radix_sort_keys", &self.radix_sort_keys)
             .field("meta", &self.meta)
             .finish()
     }
@@ -64,7 +61,6 @@ impl BlockList {
     pub const EMPTY: Self = Self {
         blocks: [Block::EMPTY; MAX_BLOCK_COUNT as usize],
         inner_ranks: [BitSet32::EMPTY; 5],
-        radix_sort_keys: BitSet96::EMPTY,
         meta: BlockListMeta::DEFAULT,
     };
 
@@ -100,8 +96,7 @@ impl BlockList {
         self.meta.twist_count()
     }
 
-    /// Adds a block to the end of the list and updates various bookkeeping
-    /// fields.
+    /// Adds a block to the end of the list and updates the rank bitmaps.
     ///
     /// Returns an error and sets `self.len > MAX_BLOCK_COUNT` in case of
     /// overflow.
@@ -117,16 +112,13 @@ impl BlockList {
         // Update ranks
         self.inner_ranks[block.inner_rank() as usize].set_from_0(i as u8);
 
-        // Update radix sort keys
-        self.radix_sort_keys.set_from_0(block.radix_sort_key());
-
         // Update blocks
         self.blocks[i as usize] = block;
 
         Ok(())
     }
 
-    /// Sets the block at the given index and updates the radix sort keys.
+    /// Sets the block at the given index.
     ///
     /// The new block must have the same rank as the old block.
     fn set_block_with_same_rank(&mut self, index: u32, new: Block) {
@@ -135,24 +127,6 @@ impl BlockList {
         debug_assert_ne!(old, new);
         debug_assert_eq!(old.inner_rank(), new.inner_rank());
 
-        self.radix_sort_keys.clear_from_1(old.radix_sort_key());
-        self.radix_sort_keys.set_from_0(new.radix_sort_key());
-
-        self.blocks[index as usize] = new;
-    }
-    /// Sets the block at the given index and updates all assorted fields.
-    fn set_block(&mut self, index: u32, new: Block) {
-        let old = self.blocks[index as usize];
-
-        // Update ranks
-        self.inner_ranks[old.inner_rank() as usize].clear_from_1(index as u8);
-        self.inner_ranks[new.inner_rank() as usize].set_from_0(index as u8);
-
-        // Update radix sort keys
-        self.radix_sort_keys.clear_from_1(old.radix_sort_key());
-        self.radix_sort_keys.set_from_0(new.radix_sort_key());
-
-        // Update blocks
         self.blocks[index as usize] = new;
     }
     /// Sets a block to empty and updates all assorted fields except `self.len`.
@@ -165,35 +139,8 @@ impl BlockList {
         // Update ranks
         self.inner_ranks[old.inner_rank() as usize].clear_from_1(index as u8);
 
-        // Update radix sort keys
-        self.radix_sort_keys.clear_from_1(old.radix_sort_key());
-
         // Update blocks
         self.blocks[index as usize] = Block::EMPTY;
-    }
-
-    /// Swaps two blocks, updating the various metadata.
-    ///
-    /// Panics in debug mode if `i != j`.
-    fn swap_blocks(&mut self, i: u32, j: u32) {
-        debug_assert_ne!(i, j);
-        let ri = self[i].inner_rank();
-        let rj = self[j].inner_rank();
-        let i_is_empty = self[i].is_empty();
-        let j_is_empty = self[j].is_empty();
-        self.blocks.swap(i as usize, j as usize);
-        if !i_is_empty {
-            self.inner_ranks[ri as usize].clear_from_1(i as u8);
-        }
-        if !j_is_empty {
-            self.inner_ranks[rj as usize].clear_from_1(j as u8);
-        }
-        if !i_is_empty {
-            self.inner_ranks[ri as usize].set_from_0(j as u8);
-        }
-        if !j_is_empty {
-            self.inner_ranks[rj as usize].set_from_0(i as u8);
-        }
     }
 
     /// Applies `setup_moves` to each piece in `block` and then adds all the
@@ -293,7 +240,7 @@ impl BlockList {
             // Check that `cleanup_inner()` is idempotent.
             let old = self.clone();
             self.cleanup_inner();
-            assert_eq!(*self, old);
+            assert_eq!(*self, old, "cleanup() is not idempotent");
         }
     }
 
@@ -301,41 +248,25 @@ impl BlockList {
         // Merge blocks until we reach a fixed point
         while self.merge_blocks() {}
 
-        // Sort blocks by `radix_sort_key`.
-        #[cfg(debug_assertions)]
-        let mut max_index = 0;
-        for i in 0..self.len() {
-            loop {
-                let block = self[i];
-                if block.is_empty() {
-                    break;
-                }
-                let j = self.radix_sort_keys.bits_before(block.radix_sort_key()) as u32;
-                #[cfg(debug_assertions)]
-                {
-                    max_index = std::cmp::max(max_index, j);
-                }
-                if i == j {
-                    break;
-                } else {
-                    self.swap_blocks(i, j);
-                }
+        // Filter out empty blocks
+        let mut len = self.len() as usize;
+        let mut i = 0;
+        while i < len {
+            while self.blocks[i].is_empty() && i < len {
+                len -= 1;
+                self.blocks.swap(i, len);
             }
+            i += 1;
         }
+        self.meta.set_block_count(len as u8);
 
-        #[cfg(debug_assertions)]
-        {
-            self.meta.set_block_count(max_index as u8 + 1);
-            debug_assert_eq!(self.len(), self.radix_sort_keys.count_ones());
-            debug_assert_eq!(
-                self.len(),
-                self.inner_ranks.iter().map(|r| r.count_ones()).sum::<u32>(),
-            );
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            self.meta
-                .set_block_count(self.radix_sort_keys.count_ones() as u8);
+        // Sort blocks by `radix_sort_key`.
+        self.blocks[..len].sort_by_key(|b| b.radix_sort_key());
+
+        // Update inner ranks
+        self.inner_ranks = Default::default();
+        for (i, &b) in self.blocks[..len].iter().enumerate() {
+            self.inner_ranks[b.inner_rank() as usize].set_from_0(i as u8);
         }
 
         debug_assert!(self.blocks().is_sorted_by_key(|b| b.radix_sort_key()));
