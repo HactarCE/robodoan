@@ -29,13 +29,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         let t = std::time::Instant::now();
         let solution = robodoan::Solver::new(params, scramble).solve();
         results.push((solution.len(), t.elapsed()));
-
-        break;
     }
     println!("\n\n---- RESULTS ----\n");
     for (move_count, time) in results {
         println!("{move_count} ETM in {time:?}");
     }
+
+    return Ok(());
 
     println!();
     println!();
