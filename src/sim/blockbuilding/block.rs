@@ -6,19 +6,11 @@ use crate::sim::common::*;
 
 /// Bit offset for the 12-bit layer mask.
 const OFS_LAYERS: u32 = 0;
-/// Bit offset for the 4-bit inner rank.
-const OFS_RANK: u32 = 12;
-/// Bit offset for the 8-bit radix sort key.
-const OFS_SORT: u32 = 16;
 /// Bit offset for the 8-bit attitude.
-const OFS_ATT: u32 = 24;
+const OFS_ATT: u32 = 16;
 
 /// Bitmask for the 12-bit layer mask.
 const _MASK_LAYERS: u32 = 0xFFF << OFS_LAYERS;
-/// Bitmask for the 4-bit inner rank.
-const _MASK_RANK: u32 = 0xF << OFS_RANK;
-/// Bitmask for the 8-bit radix sort key.
-const _MASK_SORT: u32 = 0xFF << OFS_SORT;
 /// Bitmask for the 8-bit attitude.
 const _MASK_ATT: u32 = 0xFF << OFS_ATT;
 
@@ -30,9 +22,9 @@ const _MASK_ATT: u32 = 0xFF << OFS_ATT;
 ///     - 0..4 = positive layers
 ///     - 4..8 = middle layers
 ///     - 8..12 = negative layers
-/// - 12..16 = inner rank
-/// - 16..24 = radix sort key
-/// - 24..32 = attitude
+/// - 12..16 = unused
+/// - 16..24 = attitude
+/// - 24..32 = unused
 ///
 /// An empty block is valid and always contains all zeros.
 ///
@@ -59,14 +51,6 @@ impl fmt::Debug for Block {
             .field("layers", &layers_str)
             .field("inner_rank", &self.inner_rank())
             .field("outer_rank", &self.outer_rank())
-            .field(
-                "radix_sort_key",
-                &if self.is_empty() {
-                    0
-                } else {
-                    self.radix_sort_key()
-                },
-            )
             .field("attitude", &self.attitude())
             .field("bits", &format!("0x{:08x}", self.0))
             .finish()
@@ -102,13 +86,7 @@ impl Block {
     /// Constructs a block with solved attitude from layer bits, assuming they
     /// are valid and nonempty.
     const fn from_layer_bits_nonempty(layer_bits: u16) -> Self {
-        let inner_rank = inner_rank_from_layers(layer_bits);
-        let radix_sort_key = radix_sort_key_from_layers(layer_bits);
-        Self(
-            (layer_bits as u32) << OFS_LAYERS
-                | (inner_rank as u32) << OFS_RANK
-                | (radix_sort_key as u32) << OFS_SORT,
-        )
+        Self((layer_bits as u32) << OFS_LAYERS)
     }
 
     /// Returns layer bits for an axis.
@@ -116,7 +94,7 @@ impl Block {
     /// - bit 0 = positive layer
     /// - bit 4 = middle layer
     /// - bit 8 = negative layer
-    fn layer_bits_for_axis(self, ax: Axis) -> u32 {
+    const fn layer_bits_for_axis(self, ax: Axis) -> u32 {
         self.0 >> (OFS_LAYERS + ax.id() as u32) & 0x111
     }
 
@@ -125,7 +103,7 @@ impl Block {
     /// - bit 0 = `g`
     /// - bit 4 = middle layer
     /// - bit 8 = `g.opposite()`
-    fn layer_bits_for_grip(self, g: Grip) -> u32 {
+    const fn layer_bits_for_grip(self, g: Grip) -> u32 {
         let axis_bits = self.layer_bits_for_axis(g.axis());
         if g.is_pos() {
             axis_bits
@@ -134,30 +112,22 @@ impl Block {
         }
     }
 
-    fn layer_bits(self) -> u16 {
+    const fn layer_bits(self) -> u16 {
         ((self.0 >> OFS_LAYERS) & 0xFFF) as u16
     }
 
     /// Returns the inner rank of the block, which is the number of stickers on
     /// the innermost piece. This is in the range `0..=4`.
-    pub fn inner_rank(self) -> u8 {
-        ((self.0 >> OFS_RANK) & 0xF) as u8
+    pub const fn inner_rank(self) -> u8 {
+        let layer_bits = self.layer_bits();
+        4 - (layer_bits & 0x0F0).count_ones() as u8
     }
 
     /// Returns the outer rank of the block, which is the number of stickers on
     /// the outermost piece. This is in the range `0..=4`.
-    pub fn outer_rank(self) -> u8 {
-        // TODO: try storing this instead of inner rank
-        outer_rank_from_layers(self.layer_bits())
-    }
-
-    /// Returns the sort key for the block.
-    ///
-    /// This is guaranteed to be unique among non-overlapping blocks.
-    #[track_caller]
-    pub fn radix_sort_key(self) -> u8 {
-        assert!(!self.is_empty(), "block is empty");
-        ((self.0 >> OFS_SORT) & 0xFF) as u8
+    pub const fn outer_rank(self) -> u8 {
+        let layer_bits = self.layer_bits();
+        ((layer_bits | (layer_bits >> 8)) & 0xF).count_ones() as u8
     }
 
     /// Returns the attitude of the block.
@@ -456,44 +426,6 @@ const fn layer_bit_for_grip(grip: Grip) -> u16 {
     1 << (grip.axis().id() + 8 * grip.sign_bit())
 }
 
-/// Returns the "outer rank" of a block, which is the number of stickers on its
-/// outermost piece.
-const fn outer_rank_from_layers(layers: u16) -> u8 {
-    ((layers | (layers >> 8)) & 0xF).count_ones() as u8
-}
-
-/// Returns the "outer rank" of a block, which is the number of stickers on its
-/// innermost piece.
-const fn inner_rank_from_layers(layers: u16) -> u8 {
-    4 - (layers & 0x0F0).count_ones() as u8
-}
-
-/// Returns the key for sorting a block using a radix sort. The output is in the
-/// range `0..81`.
-///
-/// This key is not unique to the block, but it will never overlap with disjoint
-/// blocks.
-const fn radix_sort_key_from_layers(layers: u16) -> u8 {
-    const fn min(a: u16, b: u16) -> u16 {
-        if a < b { a } else { b }
-    }
-
-    // For each axis, apply the following mapping:
-    //
-    // 001 -> 1
-    // 010 -> 2
-    // 100 -> 0
-    // 011 -> 2
-    // 110 -> 2
-    // 111 -> 2
-    let x = min(2, layers & 0x11) as u8;
-    let y = min(2, (layers >> 1) & 0x11) as u8;
-    let z = min(2, (layers >> 2) & 0x11) as u8;
-    let w = min(2, (layers >> 3) & 0x11) as u8;
-    // Then combine them into a base-3 number.
-    x + y * 3 + z * 9 + w * 27
-}
-
 fn ridge_indistinguishable_subgroup(active_axes: AxisSet) -> [Elem; 4] {
     match active_axes.bits() {
         0b0011 => *elements::XY_STABILIZER,
@@ -524,18 +456,6 @@ mod tests {
         assert_eq!(rev9(0x110), 0x011);
         assert_eq!(rev9(0x100), 0x001);
         assert_eq!(rev9(0x010), 0x010);
-    }
-
-    #[test]
-    fn test_radix_sort_key() {
-        for (shift, mul) in [(0, 1), (1, 3), (2, 9), (3, 27)] {
-            assert_eq!(radix_sort_key_from_layers(0x001 << shift), 1 * mul);
-            assert_eq!(radix_sort_key_from_layers(0x010 << shift), 2 * mul);
-            assert_eq!(radix_sort_key_from_layers(0x100 << shift), 0 * mul);
-            assert_eq!(radix_sort_key_from_layers(0x011 << shift), 2 * mul);
-            assert_eq!(radix_sort_key_from_layers(0x110 << shift), 2 * mul);
-            assert_eq!(radix_sort_key_from_layers(0x111 << shift), 2 * mul);
-        }
     }
 
     #[test]

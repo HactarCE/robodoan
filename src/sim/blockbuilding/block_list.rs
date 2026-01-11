@@ -261,16 +261,14 @@ impl BlockList {
         }
         self.meta.set_block_count(len as u8);
 
-        // Sort blocks by `radix_sort_key`.
-        self.blocks[..len].sort_by_key(|b| b.radix_sort_key());
+        // Canonicalize block order.
+        self.blocks[..len].sort();
 
         // Update inner ranks
         self.inner_ranks = Default::default();
         for (i, &b) in self.blocks[..len].iter().enumerate() {
             self.inner_ranks[b.inner_rank() as usize].set_from_0(i as u8);
         }
-
-        debug_assert!(self.blocks().is_sorted_by_key(|b| b.radix_sort_key()));
     }
 
     /// Merges all blocks that can be merged.
