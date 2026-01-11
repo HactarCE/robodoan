@@ -37,7 +37,10 @@ const _MASK_ATT: u32 = 0xFF << OFS_ATT;
 /// An empty block is valid and always contains all zeros.
 ///
 /// Only the attitude changes when moving a block around the puzzle.
-#[derive(Default, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(
+    Default, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, bytemuck::Zeroable, bytemuck::Pod,
+)]
+#[repr(C)]
 pub struct Block(u32);
 
 impl fmt::Debug for Block {

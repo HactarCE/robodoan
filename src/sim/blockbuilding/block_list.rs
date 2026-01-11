@@ -10,7 +10,8 @@ use crate::util::bitset::BitSet32;
 const MAX_BLOCK_COUNT: u32 = 26;
 
 /// Partial puzzle state, stored as a list of blocks.
-#[derive(Default, Clone, PartialEq, Eq, Hash)]
+#[derive(Default, Copy, Clone, PartialEq, Eq, Hash, bytemuck::Zeroable, bytemuck::Pod)]
+#[repr(C)]
 pub struct BlockList {
     /// List of blocks.
     blocks: [Block; MAX_BLOCK_COUNT as usize],

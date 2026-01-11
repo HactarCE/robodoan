@@ -4,7 +4,20 @@ use std::ops::Mul;
 use super::{Axis, Elem, Twist, Vec4, group};
 
 /// Puzzle grip: R, L, U, D, F, B, O, I
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Default,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    bytemuck::Zeroable,
+    bytemuck::Pod,
+)]
+#[repr(C)]
 pub struct Grip(u8);
 
 impl fmt::Display for Grip {

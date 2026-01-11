@@ -10,7 +10,8 @@ use itertools::Itertools;
 ///
 /// All methods that take an index panic in debug mode if the index is out of
 /// range.
-#[derive(Default, Clone, PartialEq, Eq, Hash)]
+#[derive(Default, Copy, Clone, PartialEq, Eq, Hash, bytemuck::Zeroable, bytemuck::Pod)]
+#[repr(C)]
 pub struct BitSet32(u32);
 
 impl fmt::Debug for BitSet32 {

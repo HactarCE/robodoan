@@ -26,7 +26,8 @@ const _MASK_TWIST_COUNT: u32 = 0xFFFF << OFS_TWIST_COUNT;
 ///
 /// If the block count exceeds [`super::block_list::MAX_BLOCK_COUNT`], then
 /// overflow has occurred.
-#[derive(Default, Clone, PartialEq, Eq, Hash)]
+#[derive(Default, Copy, Clone, PartialEq, Eq, Hash, bytemuck::Zeroable, bytemuck::Pod)]
+#[repr(C)]
 pub(super) struct BlockListMeta(u32);
 
 impl fmt::Debug for BlockListMeta {

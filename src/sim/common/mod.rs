@@ -15,7 +15,7 @@ pub use element::{Elem, TransformByElem};
 pub use grip::Grip;
 pub use grip_set::GripSet;
 pub use piece::Piece;
-pub use twist::{Twist, parse_twists, random_twists};
+pub use twist::{ALL_TWISTS, Twist, parse_twists, random_twists};
 
 /// 4x4 integer matrix
 pub type Mat4 = cgmath::Matrix4<i8>;

@@ -17,7 +17,7 @@ static TWIST_FROM_NAME: HashMap<String, Twist> =
     TWIST_NAMES.iter().map(|(t, s)| (s.clone(), *t)).collect();
 
 #[static_init::dynamic]
-static ALL_TWISTS: Vec<Twist> = Grip::ALL.into_iter().flat_map(|g| g.twists()).collect();
+pub static ALL_TWISTS: Vec<Twist> = Grip::ALL.into_iter().flat_map(|g| g.twists()).collect();
 
 /// Parses a space-separated list of twist names.
 pub fn parse_twists(s: &str) -> Vec<Twist> {
@@ -34,7 +34,10 @@ pub fn random_twists(rng: &mut impl Rng, count: usize) -> Vec<Twist> {
 }
 
 /// Twist of a 4-dimensional Rubik's cube
-#[derive(Default, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Default, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, bytemuck::Zeroable, bytemuck::Pod,
+)]
+#[repr(C)]
 pub struct Twist {
     /// Grip affected by the twist.
     pub grip: Grip,
@@ -78,7 +81,7 @@ impl Twist {
 
 impl fmt::Debug for Twist {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}[{}]", self.grip, self.transform)
+        write!(f, "{}[{:?}]", self.grip, self.transform)
     }
 }
 
