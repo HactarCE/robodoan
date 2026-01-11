@@ -47,13 +47,17 @@ impl fmt::Debug for Block {
             write!(&mut layers_str, ":")?;
         }
 
-        f.debug_struct("Block")
-            .field("layers", &layers_str)
-            .field("inner_rank", &self.inner_rank())
-            .field("outer_rank", &self.outer_rank())
-            .field("attitude", &self.attitude())
-            .field("bits", &format!("0x{:08x}", self.0))
-            .finish()
+        if self.is_empty() {
+            write!(f, "Block::EMPTY")
+        } else {
+            f.debug_struct("Block")
+                .field("layers", &layers_str)
+                .field("inner_rank", &self.inner_rank())
+                .field("outer_rank", &self.outer_rank())
+                .field("attitude", &self.attitude())
+                .field("bits", &format!("0x{:08x}", self.0))
+                .finish()
+        }
     }
 }
 
@@ -81,6 +85,10 @@ impl Block {
         } else {
             Self::from_layer_bits_nonempty(layer_bits)
         }
+    }
+
+    pub const fn from_bits_unchecked(bits: u32) -> Self {
+        Self(bits as u32)
     }
 
     /// Constructs a block with solved attitude from layer bits, assuming they

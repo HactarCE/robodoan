@@ -57,6 +57,7 @@ impl Segment {
     /// Adds a twist to the segment.
     #[must_use]
     pub fn push_twist(&self, twist: Twist) -> Option<Self> {
+        crate::gpu_test::add_example(&self.state, twist);
         Some(Self {
             state: self.state.twist(twist).if_nonempty()?,
             segment_twists: self.segment_twists.push(twist)?,

@@ -2,7 +2,8 @@ use std::error::Error;
 
 use itertools::Itertools;
 use rand::SeedableRng;
-use robodoan::*;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use robodoan::{sim::ALL_TWISTS, *};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let params = BlockBuildingSearchParams::default();
@@ -28,31 +29,69 @@ fn main() -> Result<(), Box<dyn Error>> {
         let t = std::time::Instant::now();
         let solution = robodoan::Solver::new(params, scramble).solve();
         results.push((solution.len(), t.elapsed()));
+
+        break;
     }
     println!("\n\n---- RESULTS ----\n");
     for (move_count, time) in results {
         println!("{move_count} ETM in {time:?}");
     }
 
-    // // let scramble = RUBIKS_4D.random_moves(&mut rand::rng(), 100);
-    // let scramble = parse_twists(
-    //     "LF IB2 IDFR LF RBI ID ODFL BUO IBL BR2 OUF BLO IDFL OB FI LD RU2 DFLI
-    // FUO IU2 OUBR BD IDFL OUB LDFO BDO FUL IR IUL OL2 LDBI FL BL IU LI2 ODFR OB2
-    // OUF DFLI RI LO RF RB LD IDBL UBRO LDFI FULI FI2 OUF ODFL UFRI LU DL FU LDBO
-    // DFRI OB LD UI FLI FO IF IFL DFLI LD FD DBO RUBI DO FD IDFL UBI LUBI BURO BDRI
-    // BU BD2 RDBI UBL DB2 LO LDBO OL2 RF BDO ULI UFLO BR2 LB IL DFRI DFR FUI ULI FL
-    // IU UBRI LO BURI", );
-    // // let scramble = parse_twists(
-    // //     "IDFL LF UBI IUB IL2 RUBO IUBR DO DLO IUBL UI2 ID FULI LUBO OUF DFRI
-    // DL BULO FLI LUBI FR BLO UBO UBRO OUFL IU RFI BR2 RI ID IB2 OUBL RUBO DFLO
-    // DFRO BO BDL UFRO OUFL ID BURO IBL OUL BD IBL DBLI FDLO BUO DBLO FLO LDF BRO
-    // ID FLI IUF OL OL OBL ULO BUO FURI UL2 BR FDLO IUBL UBLO IBL BR2 IUBL BURO IU2
-    // DF ODBL LDBO BR RUB LUBI IU2 FURI IUL OUL ODBR OL2 IB DL UB BO OUB FL2 DFRO
-    // ODBR UFRI RI RUFI RDBO IUR UBO BUL RDFI LUFO", // );
-    // println!("Scramble: {}", scramble.iter().join(" "));
-    // println!();
+    println!();
+    println!();
+    let mut examples = gpu_test::take_all_examples();
+    examples.truncate(1024 * 64);
 
-    // robodoan::Solver::new(scramble).solve();
+    let states = examples.iter().map(|(b, _)| b.clone()).collect_vec();
+    let twists = &*ALL_TWISTS;
+
+    println!(
+        "Testing {} states * {} twists on GPU",
+        states.len(),
+        twists.len(),
+    );
+
+    println!("Executing on CPU ...");
+    let t = std::time::Instant::now();
+    let expected: Vec<_> = states
+        .par_iter()
+        .flat_map_iter(|block_list| twists.iter().map(|&twist| block_list.twist(twist).len()))
+        .collect();
+    println!("Done in {:?}!", t.elapsed());
+
+    let mut gpu = robodoan::gpu::Gpu::new();
+    println!("Executing on GPU ...");
+    let t = std::time::Instant::now();
+    let actual = gpu.test_do_twist(&states, &twists);
+
+    // let mut times = vec![];
+    // for _ in 0..20 {
+    //     let t1 = std::time::Instant::now();
+    //     gpu.test_do_twist(&states, &twists);
+    //     times.push(t1.elapsed());
+    // }
+    // let len = times.len() as f64;
+    // let ms = times.iter().map(|d| d.as_secs_f64() * 1000.0);
+    // let avg = ms.clone().sum::<f64>() / len;
+    // let stddev = (ms.map(|s| (s - avg) * (s - avg)).sum::<f64>() / len).sqrt();
+    // println!("average: {avg} ms, stddev: {stddev} ms");
+
+    println!("Done in {:?}! Checking results ...", t.elapsed());
+
+    assert_eq!(expected.len(), actual.len());
+
+    for (i, (exp, act)) in itertools::izip!(&expected, actual).enumerate() {
+        if *exp != act {
+            println!("failed on index {i}");
+            dbg!(states[i / 184]);
+            dbg!(twists[i % 184]);
+            dbg!(i);
+            dbg!(i / 184);
+            dbg!(i % 184);
+            pretty_assertions::assert_eq!(*exp, act);
+        }
+    }
+    println!("SUCCESS! They all matched!");
 
     Ok(())
 }

@@ -310,6 +310,19 @@ impl BlockList {
     }
 }
 
+impl FromIterator<Block> for BlockList {
+    fn from_iter<T: IntoIterator<Item = Block>>(iter: T) -> Self {
+        let mut ret = Self::EMPTY;
+        for block in iter {
+            if ret.push(block).is_err() {
+                return Self::EMPTY;
+            }
+        }
+        ret.cleanup();
+        ret
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

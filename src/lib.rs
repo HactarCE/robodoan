@@ -2,6 +2,8 @@
 
 #[macro_use]
 mod macros;
+pub mod gpu;
+pub mod gpu_test;
 pub mod mc4d;
 pub mod search;
 pub mod sim;
