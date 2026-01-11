@@ -1,15 +1,22 @@
 use std::fmt;
 use std::ops::Mul;
 
-use itertools::Itertools;
-
 use super::{Grip, Vec4, group};
 
 /// Element from the grip group.
-#[derive(Default, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Default, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, bytemuck::Zeroable, bytemuck::Pod,
+)]
+#[repr(C)]
 pub struct Elem(u8);
 
 impl fmt::Debug for Elem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self}")
+    }
+}
+
+impl fmt::Display for Elem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let initial_grips = super::grips::RUFO;
         let permuted_grips = initial_grips.map(|g| *self * g);
@@ -22,7 +29,7 @@ impl fmt::Debug for Elem {
         let initial_grips = display_grips(initial_grips);
         let permuted_grips = display_grips(permuted_grips);
 
-        write!(f, "{id:>3}=[{initial_grips}->{permuted_grips}]")
+        write!(f, "{id}=[{initial_grips}->{permuted_grips}]")
     }
 }
 
@@ -59,31 +66,6 @@ impl Elem {
     /// Returns an iterator over all elements in the group.
     pub fn iter_all() -> impl Iterator<Item = Self> {
         (0..group::ELEM_COUNT as u8).map(Self)
-    }
-}
-
-impl fmt::Display for Elem {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let e = *self;
-
-        let moving_grips = super::grips::RUFO
-            .into_iter()
-            .filter(|&g| e * g == g)
-            .collect_vec();
-        match moving_grips.as_slice() {
-            &[a, _] => {
-                let ea = e * a;
-                if a.axis() == ea.axis() {
-                    // 180-degree axis-aligned rotation
-                    let eea = e * ea;
-                    write!(f, "{a}->{ea}->{eea}")
-                } else {
-                    // 90-degree axis-aligned rotation
-                    write!(f, "{a}->{ea}")
-                }
-            }
-            _ => write!(f, "{self:?}"), // fallback to debug impl
-        }
     }
 }
 
