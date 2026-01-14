@@ -1,6 +1,6 @@
 # robodoan
 
-Experimental blockbuilding-based search program for a [4D Rubik's cube](https://hypercubing.xyz/puzzles/3×3×3×3/)
+Experimental blockbuilding-based search program for a [4D Rubik's cube](https://hypercubing.xyz/puzzles/3x3x3x3/)
 
 Currently, this solver is only able to complete F2L. I plan on adding OLC and PLC solvers in the future.
 
